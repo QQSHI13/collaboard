@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CollabBoard - Real-time Collaborative Whiteboard</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            background-color: #161b22;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            font-weight: 600;
+            color: #58a6ff;
+        }
+
+        .logo svg {
+            width: 28px;
+            height: 28px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #8b949e;
+            transition: background-color 0.3s;
+        }
+
+        .status-dot.connected {
+            background-color: #238636;
+            box-shadow: 0 0 8px #238636;
+        }
+
+        .status-dot.connecting {
+            background-color: #9e6a03;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .room-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .room-code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 18px;
+            font-weight: 600;
+            color: #58a6ff;
+            background-color: #0d1117;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background-color: #238636;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background-color: #2ea043;
+        }
+
+        .btn-secondary {
+            background-color: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+        }
+
+        .btn-secondary:hover {
+            background-color: #30363d;
+        }
+
+        .btn-danger {
+            background-color: #da3633;
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background-color: #f85149;
+        }
+
+        /* Main Layout */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 65px);
+        }
+
+        /* Toolbar */
+        .toolbar {
+            width: 70px;
+            background-color: #161b22;
+            border-right: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px 0;
+            gap: 16px;
+        }
+
+        .tool-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 0 10px;
+        }
+
+        .tool-section-title {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #8b949e;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .color-palette {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .color-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .color-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .color-btn.active {
+            border-color: #fff;
+            box-shadow: 0 0 0 2px #58a6ff;
+        }
+
+        .color-btn.active::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 10px;
+            height: 10px;
+            background-color: #fff;
+            border-radius: 50%;
+        }
+
+        .brush-sizes {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .size-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            background-color: #21262d;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .size-btn:hover {
+            background-color: #30363d;
+        }
+
+        .size-btn.active {
+            border-color: #58a6ff;
+            background-color: #0d1117;
+        }
+
+        .size-dot {
+            background-color: #c9d1d9;
+            border-radius: 50%;
+        }
+
+        .divider {
+            width: 40px;
+            height: 1px;
+            background-color: #30363d;
+            margin: 4px 0;
+        }
+
+        .action-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 8px;
+            background-color: #21262d;
+            border: 1px solid #30363d;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            color: #c9d1d9;
+        }
+
+        .action-btn:hover {
+            background-color: #30363d;
+            color: #fff;
+        }
+
+        .action-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* Canvas Container */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background-color: #0d1117;
+            background-image: 
+                linear-gradient(#21262d 1px, transparent 1px),
+                linear-gradient(90deg, #21262d 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        #whiteboard {
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 32px;
+            width: 90%;
+            max-width: 420px;
+            text-align: center;
+        }
+
+        .modal-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #f0f6fc;
+        }
+
+        .modal-subtitle {
+            font-size: 14px;
+            color: #8b949e;
+            margin-bottom: 24px;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 24px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            text-align: center;
+            letter-spacing: 8px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #f0f6fc;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+        }
+
+        .modal-input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .modal-buttons .btn {
+            flex: 1;
+            justify-content: center;
+            padding: 12px 20px;
+            font-size: 16px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Peer Cursors */
+        .peer-cursor {
+            position: absolute;
+            pointer-events: none;
+            z-index: 100;
+            transition: transform 0.1s linear;
+        }
+
+        .peer-cursor svg {
+            width: 20px;
+            height: 20px;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+        }
+
+        .peer-label {
+            position: absolute;
+            top: 16px;
+            left: 12px;
+            background-color: #58a6ff;
+            color: #0d1117;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .toast {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-left: 4px solid #58a6ff;
+            border-radius: 6px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease;
+            max-width: 300px;
+        }
+
+        .toast.success {
+            border-left-color: #238636;
+        }
+
+        .toast.error {
+            border-left-color: #f85149;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 2px;
+        }
+
+        .toast-message {
+            font-size: 13px;
+            color: #8b949e;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Peers List */
+        .peers-list {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 16px;
+        }
+
+        .peer-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: #0d1117;
+            border: 2px solid #0d1117;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="9" y1="3" x2="9" y2="21"/>
+                <line x1="15" y1="3" x2="15" y2="21"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="3" y1="15" x2="21" y2="15"/>
+            </svg>
+            CollabBoard
+        </div>
+        
+        <div class="room-info">
+            <div class="peers-list" id="peersList"></div>
+            <div class="connection-status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Offline</span>
+            </div>
+            <div class="room-code" id="roomCodeDisplay">------</div>
+            <button class="btn btn-secondary" id="copyCodeBtn" title="Copy room code">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+            </button>
+            <button class="btn btn-primary" id="joinRoomBtn">Join Room</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <div class="tool-section">
+                <span class="tool-section-title">Colors</span>
+                <div class="color-palette" id="colorPalette">
+                    <div class="color-btn active" data-color="#58a6ff" style="background-color: #58a6ff;"></div>
+                    <div class="color-btn" data-color="#f85149" style="background-color: #f85149;"></div>
+                    <div class="color-btn" data-color="#238636" style="background-color: #238636;"></div>
+                    <div class="color-btn" data-color="#d29922" style="background-color: #d29922;"></div>
+                    <div class="color-btn" data-color="#a371f7" style="background-color: #a371f7;"></div>
+                    <div class="color-btn" data-color="#f0883e" style="background-color: #f0883e;"></div>
+                    <div class="color-btn" data-color="#c9d1d9" style="background-color: #c9d1d9;"></div>
+                    <div class="color-btn" data-color="#0d1117" style="background-color: #0d1117; border: 1px solid #30363d;"></div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="tool-section">
+                <span class="tool-section-title">Size</span>
+                <div class="brush-sizes" id="brushSizes">
+                    <div class="size-btn active" data-size="2">
+                        <div class="size-dot" style="width: 4px; height: 4px;"></div>
+                    </div>
+                    <div class="size-btn" data-size="5">
+                        <div class="size-dot" style="width: 8px; height: 8px;"></div>
+                    </div>
+                    <div class="size-btn" data-size="10">
+                        <div class="size-dot" style="width: 12px; height: 12px;"></div>
+                    </div>
+                    <div class="size-btn" data-size="20">
+                        <div class="size-dot" style="width: 18px; height: 18px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="tool-section">
+                <span class="tool-section-title">Actions</span>
+                <button class="action-btn" id="clearBtn" title="Clear canvas">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                </button>
+                <button class="action-btn" id="downloadBtn" title="Download canvas">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-container" id="canvasContainer">
+            <canvas id="whiteboard"></canvas>
+        </div>
+    </div>
+
+    <!-- Join Room Modal -->
+    <div class="modal-overlay" id="joinModal">
+        <div class="modal">
+            <h2 class="modal-title">Join a Room</h2>
+            <p class="modal-subtitle">Enter a 6-digit room code to collaborate</p>
+            <input type="text" class="modal-input" id="roomCodeInput" maxlength="6" placeholder="------">
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" id="createRoomBtn">Create New</button>
+                <button class="btn btn-primary" id="connectBtn">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // ==================== CONFIGURATION ====================
+        const PEER_CONFIG = {
+            host: '0.peerjs.com',
+            port: 443,
+            secure: true,
+            debug: 2
+        };
+
+        const COLORS = ['#58a6ff', '#f85149', '#238636', '#d29922', '#a371f7', '#f0883e', '#c9d1d9', '#0d1117'];
+        const CURSOR_COLORS = ['#58a6ff', '#f85149', '#238636', '#d29922', '#a371f7', '#f0883e', '#3fb950', '#79c0ff'];
+
+        // ==================== STATE ====================
+        let peer = null;
+        let connections = new Map(); // peerId -> { conn, dataConn, cursor }
+        let roomCode = null;
+        let isHost = false;
+        let currentColor = '#58a6ff';
+        let currentSize = 2;
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let peerCursors = new Map();
+
+        // ==================== DOM ELEMENTS ====================
+        const canvas = document.getElementById('whiteboard');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvasContainer');
+        const joinModal = document.getElementById('joinModal');
+        const roomCodeInput = document.getElementById('roomCodeInput');
+        const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const peersList = document.getElementById('peersList');
+        const toastContainer = document.getElementById('toastContainer');
+
+        // ==================== UTILITY FUNCTIONS ====================
+        function generateRoomCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+
+        function showToast(title, message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <div class="toast-title">${title}</div>
+                <div class="toast-message">${message}</div>
+            `;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function updateStatus(status, text) {
+            statusDot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+        }
+
+        function updatePeersList() {
+            peersList.innerHTML = '';
+            connections.forEach((connData, peerId) => {
+                const colorIndex = Array.from(connections.keys()).indexOf(peerId) % CURSOR_COLORS.length;
+                const avatar = document.createElement('div');
+                avatar.className = 'peer-avatar';
+                avatar.style.backgroundColor = CURSOR_COLORS[colorIndex];
+                avatar.textContent = 'P' + (Array.from(connections.keys()).indexOf(peerId) + 1);
+                avatar.title = `Peer ${peerId}`;
+                peersList.appendChild(avatar);
+            });
+        }
+
+        // ==================== CANVAS SETUP ====================
+        function resizeCanvas() {
+            const rect = container.getBoundingClientRect();
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
+            
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            
+            // Restore content
+            ctx.drawImage(tempCanvas, 0, 0);
+            
+            // Set default styles
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // ==================== DRAWING FUNCTIONS ====================
+        function getCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function startDrawing(e) {
+            e.preventDefault();
+            isDrawing = true;
+            const coords = getCoordinates(e);
+            lastX = coords.x;
+            lastY = coords.y;
+            
+            // Draw a dot for single click
+            draw(lastX, lastY, lastX, lastY, currentColor, currentSize);
+            
+            // Broadcast to peers
+            broadcastDraw(lastX, lastY, lastX, lastY, currentColor, currentSize);
+        }
+
+        function draw(x1, y1, x2, y2, color, size) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = size;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+
+        function continueDrawing(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+            
+            const coords = getCoordinates(e);
+            const x = coords.x;
+            const y = coords.y;
+            
+            draw(lastX, lastY, x, y, currentColor, currentSize);
+            broadcastDraw(lastX, lastY, x, y, currentColor, currentSize);
+            
+            lastX = x;
+            lastY = y;
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            broadcast({ type: 'clear' });
+            showToast('Canvas Cleared', 'The whiteboard has been cleared');
+        }
+
+        function broadcastDraw(x1, y1, x2, y2, color, size) {
+            broadcast({
+                type: 'draw',
+                x1, y1, x2, y2, color, size
+            });
+        }
+
+        function broadcast(data) {
+            connections.forEach(connData => {
+                if (connData.dataConn && connData.dataConn.open) {
+                    connData.dataConn.send(data);
+                }
+            });
+        }
+
+        // ==================== PEER CURSOR ====================
+        function createPeerCursor(peerId) {
+            const colorIndex = Array.from(connections.keys()).indexOf(peerId) % CURSOR_COLORS.length;
+            const color = CURSOR_COLORS[colorIndex];
+            
+            const cursor = document.createElement('div');
+            cursor.className = 'peer-cursor';
+            cursor.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1">
+                    <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.85a.5.5 0 0 0-.85.35Z"/>
+                </svg>
+                <span class="peer-label">P${Array.from(connections.keys()).indexOf(peerId) + 1}</span>
+            `;
+            container.appendChild(cursor);
+            return cursor;
+        }
+
+        function updatePeerCursor(peerId, x, y) {
+            let cursor = peerCursors.get(peerId);
+            if (!cursor) {
+                cursor = createPeerCursor(peerId);
+                peerCursors.set(peerId, cursor);
+            }
+            cursor.style.transform = `translate(${x}px, ${y}px)`;
+        }
+
+        function removePeerCursor(peerId) {
+            const cursor = peerCursors.get(peerId);
+            if (cursor) {
+                cursor.remove();
+                peerCursors.delete(peerId);
+            }
+        }
+
+        // ==================== WEBRTC / PEERJS ====================
+        function initPeer(code) {
+            roomCode = code;
+            roomCodeDisplay.textContent = roomCode;
+            
+            updateStatus('connecting', 'Connecting...');
+            
+            peer = new Peer(roomCode, PEER_CONFIG);
+            
+            peer.on('open', (id) => {
+                console.log('Peer opened with ID:', id);
+                updateStatus('connected', 'Connected');
+                isHost = true;
+                joinModal.classList.add('hidden');
+                showToast('Room Created', `Room code: ${roomCode}`, 'success');
+            });
+            
+            peer.on('connection', (conn) => {
+                console.log('Incoming connection from:', conn.peer);
+                handleConnection(conn);
+            });
+            
+            peer.on('error', (err) => {
+                console.error('Peer error:', err);
+                if (err.type === 'unavailable-id') {
+                    // Room exists, try to join
+                    joinRoom(code);
+                } else {
+                    updateStatus('', 'Error');
+                    showToast('Connection Error', err.message, 'error');
+                }
+            });
+        }
+
+        function joinRoom(code) {
+            roomCode = code;
+            roomCodeDisplay.textContent = roomCode;
+            
+            updateStatus('connecting', 'Connecting...');
+            
+            const myId = generateRoomCode() + Math.random().toString(36).substring(2, 6);
+            peer = new Peer(myId, PEER_CONFIG);
+            
+            peer.on('open', () => {
+                console.log('Joining room:', roomCode);
+                const conn = peer.connect(roomCode, {
+                    reliable: true,
+                    serialization: 'json'
+                });
+                
+                conn.on('open', () => {
+                    console.log('Connected to host');
+                    handleConnection(conn);
+                    updateStatus('connected', 'Connected');
+                    joinModal.classList.add('hidden');
+                    showToast('Joined Room', `Connected to ${roomCode}`, 'success');
+                });
+                
+                conn.on('error', (err) => {
+                    console.error('Connection error:', err);
+                    showToast('Connection Error', 'Failed to join room', 'error');
+                });
+            });
+            
+            peer.on('connection', (conn) => {
+                // Handle connections from other peers (for multi-peer mesh)
+                handleConnection(conn);
+            });
+            
+            peer.on('error', (err) => {
+                console.error('Peer error:', err);
+                updateStatus('', 'Error');
+                showToast('Connection Error', err.message, 'error');
+            });
+        }
+
+        function handleConnection(conn) {
+            const peerId = conn.peer;
+            
+            // Create data channel for drawing data
+            const dataConn = conn;
+            
+            connections.set(peerId, {
+                conn: conn,
+                dataConn: dataConn,
+                cursor: null
+            });
+            
+            dataConn.on('data', (data) => {
+                handlePeerData(peerId, data);
+            });
+            
+            dataConn.on('close', () => {
+                console.log('Connection closed:', peerId);
+                removePeer(peerId);
+            });
+            
+            dataConn.on('error', (err) => {
+                console.error('Connection error:', err);
+                removePeer(peerId);
+            });
+            
+            updatePeersList();
+            showToast('Peer Connected', `New peer joined`, 'success');
+            
+            // Send current canvas state to new peer (if host)
+            if (isHost) {
+                setTimeout(() => {
+                    const canvasData = canvas.toDataURL();
+                    dataConn.send({ type: 'canvas', data: canvasData });
+                }, 500);
+            }
+        }
+
+        function handlePeerData(peerId, data) {
+            switch (data.type) {
+                case 'draw':
+                    draw(data.x1, data.y1, data.x2, data.y2, data.color, data.size);
+                    break;
+                case 'clear':
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    break;
+                case 'cursor':
+                    updatePeerCursor(peerId, data.x, data.y);
+                    break;
+                case 'canvas':
+                    // Received full canvas state
+                    const img = new Image();
+                    img.onload = () => {
+                        ctx.drawImage(img, 0, 0);
+                    };
+                    img.src = data.data;
+                    break;
+            }
+        }
+
+        function removePeer(peerId) {
+            removePeerCursor(peerId);
+            connections.delete(peerId);
+            updatePeersList();
+            showToast('Peer Disconnected', 'A peer left the room');
+        }
+
+        // ==================== EVENT LISTENERS ====================
+        
+        // Canvas drawing events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', (e) => {
+            continueDrawing(e);
+            // Broadcast cursor position
+            if (connections.size > 0) {
+                const coords = getCoordinates(e);
+                broadcast({ type: 'cursor', x: coords.x, y: coords.y });
+            }
+        });
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        
+        // Touch events
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', continueDrawing, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing);
+        
+        // Color selection
+        document.getElementById('colorPalette').addEventListener('click', (e) => {
+            if (e.target.classList.contains('color-btn')) {
+                document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('active'));
+                e.target.classList.add('active');
+                currentColor = e.target.dataset.color;
+            }
+        });
+        
+        // Brush size selection
+        document.getElementById('brushSizes').addEventListener('click', (e) => {
+            const btn = e.target.closest('.size-btn');
+            if (btn) {
+                document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentSize = parseInt(btn.dataset.size);
+            }
+        });
+        
+        // Clear canvas
+        document.getElementById('clearBtn').addEventListener('click', clearCanvas);
+        
+        // Download canvas
+        document.getElementById('downloadBtn').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = `whiteboard-${roomCode || 'export'}-${Date.now()}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+            showToast('Downloaded', 'Canvas saved as PNG', 'success');
+        });
+        
+        // Join room modal
+        document.getElementById('joinRoomBtn').addEventListener('click', () => {
+            joinModal.classList.remove('hidden');
+            roomCodeInput.focus();
+        });
+        
+        // Create new room
+        document.getElementById('createRoomBtn').addEventListener('click', () => {
+            const code = generateRoomCode();
+            initPeer(code);
+        });
+        
+        // Connect to room
+        document.getElementById('connectBtn').addEventListener('click', () => {
+            const code = roomCodeInput.value.trim().toUpperCase();
+            if (code.length === 6) {
+                joinRoom(code);
+            } else {
+                showToast('Invalid Code', 'Please enter a 6-digit room code', 'error');
+            }
+        });
+        
+        // Enter key on input
+        roomCodeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('connectBtn').click();
+            }
+        });
+        
+        // Copy room code
+        document.getElementById('copyCodeBtn').addEventListener('click', () => {
+            if (roomCode) {
+                navigator.clipboard.writeText(roomCode);
+                showToast('Copied', 'Room code copied to clipboard', 'success');
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl/Cmd + Z could be undo (not implemented)
+            // Ctrl/Cmd + Shift + C for clear
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') {
+                e.preventDefault();
+                clearCanvas();
+            }
+        });
+
+        // ==================== INITIALIZATION ====================
+        console.log('CollabBoard initialized');
+        console.log('Waiting for user to create or join a room...');
+    </script>
+</body>
+</html>
