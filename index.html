@@ -750,6 +750,7 @@
             
             const cursor = document.createElement('div');
             cursor.className = 'peer-cursor';
+            cursor.dataset.peerId = peerId;
             cursor.innerHTML = `
                 <svg viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1">
                     <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.85a.5.5 0 0 0-.85.35Z"/>
@@ -757,6 +758,13 @@
                 <span class="peer-label">P${Array.from(connections.keys()).indexOf(peerId) + 1}</span>
             `;
             container.appendChild(cursor);
+            
+            // Store cursor reference in connection data
+            const connData = connections.get(peerId);
+            if (connData) {
+                connData.cursor = cursor;
+            }
+            
             return cursor;
         }
 
