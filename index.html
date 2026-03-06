@@ -876,7 +876,20 @@
             
             peer = new Peer(roomCode, PEER_CONFIG);
             
+            // Handle peer open failure
+            const peerOpenTimeout = setTimeout(() => {
+                if (!peer || !peer.open) {
+                    showToast('Connection Failed', 'Could not connect to signaling server', 'error');
+                    updateStatus('', 'Offline');
+                    if (peer) {
+                        peer.destroy();
+                        peer = null;
+                    }
+                }
+            }, 15000);
+            
             peer.on('open', (id) => {
+                clearTimeout(peerOpenTimeout);
                 console.log('Peer opened with ID:', id);
                 updateStatus('connected', 'Connected');
                 isHost = true;
@@ -933,7 +946,20 @@
             const myId = 'u' + Date.now().toString(36) + Math.random().toString(36).substring(2, 4);
             peer = new Peer(myId, PEER_CONFIG);
             
+            // Handle peer open failure (set a timeout)
+            const peerOpenTimeout = setTimeout(() => {
+                if (!peer || !peer.open) {
+                    showToast('Connection Failed', 'Could not connect to signaling server', 'error');
+                    updateStatus('', 'Offline');
+                    if (peer) {
+                        peer.destroy();
+                        peer = null;
+                    }
+                }
+            }, 15000); // 15 second timeout for peer to open
+            
             peer.on('open', () => {
+                clearTimeout(peerOpenTimeout);
                 console.log('Joining room:', roomCode);
                 const conn = peer.connect(roomCode, {
                     reliable: true,
