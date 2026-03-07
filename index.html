@@ -267,6 +267,12 @@
             color: #fff;
         }
 
+        .action-btn.active {
+            background-color: #58a6ff;
+            border-color: #58a6ff;
+            color: #fff;
+        }
+
         .action-btn svg {
             width: 20px;
             height: 20px;
@@ -278,7 +284,7 @@
             position: relative;
             overflow: hidden;
             background-color: #0d1117;
-            background-image: 
+            background-image:
                 linear-gradient(#21262d 1px, transparent 1px),
                 linear-gradient(90deg, #21262d 1px, transparent 1px);
             background-size: 20px 20px;
@@ -482,7 +488,7 @@
             </svg>
             CollaBoard
         </div>
-        
+
         <div class="room-info">
             <div class="peers-list" id="peersList"></div>
             <div class="connection-status">
@@ -536,6 +542,23 @@
                         <div class="size-dot" style="width: 18px; height: 18px;"></div>
                     </div>
                 </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="tool-section">
+                <span class="tool-section-title">View</span>
+                <button class="action-btn" id="panBtn" title="Pan canvas (Space+drag or middle mouse)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18"/>
+                    </svg>
+                </button>
+                <button class="action-btn" id="resetViewBtn" title="Reset view">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <point cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
             </div>
 
             <div class="divider"></div>
@@ -604,16 +627,25 @@
         let lastX = 0;
         let lastY = 0;
         let peerCursors = new Map();
-        
+
+        // Infinite canvas state
+        let strokes = []; // All strokes stored for infinite canvas
+        let viewOffsetX = 0;
+        let viewOffsetY = 0;
+        let isPanning = false;
+        let panStartX = 0;
+        let panStartY = 0;
+        let currentTool = 'pen'; // 'pen', 'eraser', 'pan'
+
         // Throttling for cursor broadcasts
         let lastCursorBroadcast = 0;
         const CURSOR_THROTTLE_MS = 100;
         let connectionTimeout = null;
         let keepaliveInterval = null;
-        
+
         // Connection state tracking for reconnection
         const pendingReconnects = new Map(); // peerId -> timeoutId
-        
+
         // Start keepalive to maintain connection
         function startKeepalive() {
             if (keepaliveInterval) clearInterval(keepaliveInterval);
@@ -630,7 +662,7 @@
                             }
                         }
                     });
-                    
+
                     // Check for dead connections (no ping response in 10 seconds)
                     const now = Date.now();
                     connections.forEach((connData, peerId) => {
@@ -642,33 +674,33 @@
                 }
             }, 3000); // Ping every 3 seconds
         }
-        
+
         function stopKeepalive() {
             if (keepaliveInterval) {
                 clearInterval(keepaliveInterval);
                 keepaliveInterval = null;
             }
         }
-        
+
         // Auto-reconnect to a peer
         function scheduleReconnect(peerId, isHostConnection) {
             // Clear any existing reconnect for this peer
             if (pendingReconnects.has(peerId)) {
                 clearTimeout(pendingReconnects.get(peerId));
             }
-            
+
             // Don't reconnect if we're cleaning up or already connected
             if (!peer || peer.destroyed || connections.has(peerId)) {
                 pendingReconnects.delete(peerId);
                 return;
             }
-            
+
             console.log('Scheduling reconnect to', peerId, 'in 2 seconds...');
             const timeoutId = setTimeout(() => {
                 pendingReconnects.delete(peerId);
-                
+
                 if (!peer || peer.destroyed) return;
-                
+
                 // For clients, try to reconnect to the host
                 if (isHostConnection && roomCode) {
                     console.log('Attempting to reconnect to host:', roomCode);
@@ -678,13 +710,13 @@
                             serialization: 'json',
                             metadata: { peerId: peer.id, reconnect: true }
                         });
-                        
+
                         conn.on('open', () => {
                             console.log('Reconnected to host!');
                             handleConnection(conn, true);
                             showToast('Reconnected', 'Connection restored', 'success');
                         });
-                        
+
                         conn.on('error', (err) => {
                             console.error('Reconnection failed:', err);
                         });
@@ -693,7 +725,7 @@
                     }
                 }
             }, 2000);
-            
+
             pendingReconnects.set(peerId, timeoutId);
         }
 
@@ -741,7 +773,7 @@
                 avatar.title = `Peer ${peerId}`;
                 peersList.appendChild(avatar);
             });
-            
+
             // Manage keepalive based on connection count
             if (connections.size > 0) {
                 startKeepalive();
@@ -766,31 +798,17 @@
             const rect = container.getBoundingClientRect();
             const newWidth = Math.floor(rect.width);
             const newHeight = Math.floor(rect.height);
-            
+
             // Only resize if dimensions actually changed
             if (canvas.width === newWidth && canvas.height === newHeight) {
                 return;
             }
-            
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvas.width;
-            tempCanvas.height = canvas.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            
-            // Disable image smoothing for crisp pixel-perfect restore
-            tempCtx.imageSmoothingEnabled = false;
-            tempCtx.drawImage(canvas, 0, 0);
-            
+
             canvas.width = newWidth;
             canvas.height = newHeight;
-            
-            // Restore content with image smoothing disabled
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(tempCanvas, 0, 0);
-            
-            // Set default styles
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+
+            // Redraw all strokes
+            redrawCanvas();
         }
 
         window.addEventListener('resize', resizeCanvas);
@@ -807,61 +825,116 @@
             };
         }
 
-        function isInsideCanvas(x, y) {
-            return x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height;
+        // Convert screen coordinates to world coordinates
+        function screenToWorld(sx, sy) {
+            return {
+                x: sx - viewOffsetX,
+                y: sy - viewOffsetY
+            };
+        }
+
+        // Convert world coordinates to screen coordinates
+        function worldToScreen(wx, wy) {
+            return {
+                x: wx + viewOffsetX,
+                y: wy + viewOffsetY
+            };
         }
 
         function startDrawing(e) {
             e.preventDefault();
-            isDrawing = true;
+
             const coords = getCoordinates(e);
-            lastX = coords.x;
-            lastY = coords.y;
-            
+
+            // Check for pan tool or space key or middle mouse
+            if (currentTool === 'pan' || e.button === 1 || e.buttons === 4) {
+                isPanning = true;
+                panStartX = coords.x - viewOffsetX;
+                panStartY = coords.y - viewOffsetY;
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+
+            isDrawing = true;
+            const worldPos = screenToWorld(coords.x, coords.y);
+            lastX = worldPos.x;
+            lastY = worldPos.y;
+
             // Draw a dot for single click
-            draw(lastX, lastY, lastX, lastY, currentColor, currentSize);
-            
+            const stroke = { x1: lastX, y1: lastY, x2: lastX, y2: lastY, color: currentColor, size: currentSize };
+            strokes.push(stroke);
+            drawStroke(stroke);
+
             // Broadcast to peers
             broadcastDraw(lastX, lastY, lastX, lastY, currentColor, currentSize);
         }
 
-        function draw(x1, y1, x2, y2, color, size) {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = size;
+        function drawStroke(stroke) {
+            const s1 = worldToScreen(stroke.x1, stroke.y1);
+            const s2 = worldToScreen(stroke.x2, stroke.y2);
+
+            ctx.strokeStyle = stroke.color;
+            ctx.lineWidth = stroke.size;
             ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
+            ctx.moveTo(s1.x, s1.y);
+            ctx.lineTo(s2.x, s2.y);
             ctx.stroke();
         }
 
+        function draw(x1, y1, x2, y2, color, size) {
+            // Store stroke in world coordinates
+            const stroke = { x1, y1, x2, y2, color, size };
+            strokes.push(stroke);
+            drawStroke(stroke);
+        }
+
         function continueDrawing(e) {
+            if (isPanning) {
+                e.preventDefault();
+                const coords = getCoordinates(e);
+                viewOffsetX = coords.x - panStartX;
+                viewOffsetY = coords.y - panStartY;
+                redrawCanvas();
+                return;
+            }
+
             if (!isDrawing) return;
             e.preventDefault();
-            
+
             const coords = getCoordinates(e);
-            const x = coords.x;
-            const y = coords.y;
-            
-            draw(lastX, lastY, x, y, currentColor, currentSize);
-            broadcastDraw(lastX, lastY, x, y, currentColor, currentSize);
-            
-            lastX = x;
-            lastY = y;
+            const worldPos = screenToWorld(coords.x, coords.y);
+
+            const stroke = { x1: lastX, y1: lastY, x2: worldPos.x, y2: worldPos.y, color: currentColor, size: currentSize };
+            strokes.push(stroke);
+            drawStroke(stroke);
+            broadcastDraw(lastX, lastY, worldPos.x, worldPos.y, currentColor, currentSize);
+
+            lastX = worldPos.x;
+            lastY = worldPos.y;
         }
 
         function stopDrawing() {
             isDrawing = false;
+            isPanning = false;
+            canvas.style.cursor = 'crosshair';
+        }
+
+        function redrawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            // Draw all strokes with current view offset
+            strokes.forEach(stroke => drawStroke(stroke));
         }
 
         function clearCanvas() {
             // Confirm before clearing if there's content
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const hasContent = imageData.data.some(channel => channel !== 0);
-            
-            if (hasContent && !confirm('Clear the entire canvas? This cannot be undone.')) {
+            if (strokes.length > 0 && !confirm('Clear the entire canvas? This cannot be undone.')) {
                 return;
             }
-            
+
+            strokes = [];
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             broadcast({ type: 'clear' });
             showToast('Canvas Cleared', 'The whiteboard has been cleared');
@@ -879,7 +952,7 @@
                 if (connData.dataConn && connData.dataConn.open) {
                     try {
                         // Check connection state more thoroughly
-                        if (connData.dataConn.peerConnection && 
+                        if (connData.dataConn.peerConnection &&
                             connData.dataConn.peerConnection.connectionState === 'connected') {
                             connData.dataConn.send(data);
                         } else if (!connData.dataConn.peerConnection) {
@@ -890,7 +963,7 @@
                         console.error('Failed to send to peer:', peerId, err);
                         // Only remove peer on specific errors that indicate dead connection
                         if (err.message && (
-                            err.message.includes('closed') || 
+                            err.message.includes('closed') ||
                             err.message.includes('not open') ||
                             err.message.includes('failed') ||
                             err.message.includes('disconnected')
@@ -909,7 +982,7 @@
                 return;
             }
             lastCursorBroadcast = now;
-            
+
             // Only broadcast if inside canvas
             if (isInsideCanvas(x, y)) {
                 broadcast({ type: 'cursor', x, y, visible: true });
@@ -924,15 +997,15 @@
         function createPeerCursor(peerId) {
             // Remove existing cursor if any
             removePeerCursor(peerId);
-            
+
             const color = getPeerColor(peerId);
-            
+
             const cursor = document.createElement('div');
             cursor.className = 'peer-cursor';
             cursor.dataset.peerId = peerId;
-            
+
             const peerIndex = Array.from(connections.keys()).indexOf(peerId) + 1;
-            
+
             cursor.innerHTML = `
                 <svg viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1">
                     <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.85a.5.5 0 0 0-.85.35Z"/>
@@ -941,7 +1014,7 @@
             `;
             container.appendChild(cursor);
             peerCursors.set(peerId, cursor);
-            
+
             return cursor;
         }
 
@@ -951,7 +1024,9 @@
                 cursor = createPeerCursor(peerId);
                 peerCursors.set(peerId, cursor);
             }
-            cursor.style.transform = `translate(${x}px, ${y}px)`;
+            // Convert world coordinates to screen coordinates
+            const screenPos = worldToScreen(x, y);
+            cursor.style.transform = `translate(${screenPos.x}px, ${screenPos.y}px)`;
         }
 
         function removePeerCursor(peerId) {
@@ -980,27 +1055,27 @@
                 { urls: 'stun:stun1.l.google.com:19302' }
             ]
         };
-        
+
         let connectionRetryCount = 0;
         let peerOpenTimeout = null;
-        
+
         function initPeer(code) {
             // Clean up existing peer if any
             cleanupPeer();
-            
+
             roomCode = code;
             roomCodeDisplay.textContent = roomCode;
-            
+
             updateStatus('connecting', 'Connecting...');
-            
+
             // Create peer with additional ICE servers for better connectivity
             const peerConfig = {
                 ...PEER_CONFIG,
                 config: { iceServers: CONNECTION_CONFIG.iceServers }
             };
-            
+
             peer = new Peer(roomCode, peerConfig);
-            
+
             // Handle peer open failure
             peerOpenTimeout = setTimeout(() => {
                 if (!peer || !peer.open) {
@@ -1011,7 +1086,7 @@
                     joinModal.classList.remove('hidden');
                 }
             }, CONNECTION_CONFIG.connectionTimeout);
-            
+
             peer.on('open', (id) => {
                 clearTimeout(peerOpenTimeout);
                 peerOpenTimeout = null;
@@ -1022,7 +1097,7 @@
                 joinModal.classList.add('hidden');
                 showToast('Room Created', `Room code: ${roomCode}`, 'success');
             });
-            
+
             peer.on('connection', (conn) => {
                 console.log('Incoming connection from:', conn.peer);
                 // Prevent self-connections
@@ -1033,7 +1108,7 @@
                 }
                 handleConnection(conn, false);
             });
-            
+
             peer.on('disconnected', () => {
                 console.warn('Peer disconnected from signaling server');
                 updateStatus('connecting', 'Reconnecting...');
@@ -1042,18 +1117,18 @@
                     peer.reconnect();
                 }
             });
-            
+
             peer.on('close', () => {
                 console.log('Peer connection closed');
                 updateStatus('', 'Offline');
                 cleanupConnections();
             });
-            
+
             peer.on('error', (err) => {
                 console.error('Peer error:', err);
                 clearTimeout(peerOpenTimeout);
                 peerOpenTimeout = null;
-                
+
                 if (err.type === 'unavailable-id') {
                     // Room code exists, generate a new one instead of joining
                     showToast('Code Taken', 'Generating new room code...', 'info');
@@ -1070,7 +1145,7 @@
                 }
             });
         }
-        
+
         function cleanupPeer() {
             clearTimeout(peerOpenTimeout);
             peerOpenTimeout = null;
@@ -1085,7 +1160,7 @@
             cleanupConnections();
             isHost = false;
         }
-        
+
         function cleanupConnections() {
             stopKeepalive();
             // Clear all pending reconnects
@@ -1093,7 +1168,7 @@
                 clearTimeout(timeoutId);
             });
             pendingReconnects.clear();
-            
+
             connections.forEach((connData, peerId) => {
                 try {
                     if (connData.dataConn) connData.dataConn.close();
@@ -1113,25 +1188,25 @@
                 clearTimeout(connectionTimeout);
                 connectionTimeout = null;
             }
-            
+
             // Clean up existing peer if any
             cleanupPeer();
-            
+
             roomCode = code;
             roomCodeDisplay.textContent = roomCode;
-            
+
             updateStatus('connecting', 'Connecting...');
-            
+
             // Create peer with additional ICE servers for better connectivity
             const peerConfig = {
                 ...PEER_CONFIG,
                 config: { iceServers: CONNECTION_CONFIG.iceServers }
             };
-            
+
             // Use a shorter, valid peer ID
             const myId = 'u' + Date.now().toString(36) + Math.random().toString(36).substring(2, 4);
             peer = new Peer(myId, peerConfig);
-            
+
             // Handle peer open failure (set a timeout)
             peerOpenTimeout = setTimeout(() => {
                 if (!peer || !peer.open) {
@@ -1141,12 +1216,12 @@
                     joinModal.classList.remove('hidden');
                 }
             }, CONNECTION_CONFIG.connectionTimeout);
-            
+
             peer.on('open', () => {
                 clearTimeout(peerOpenTimeout);
                 peerOpenTimeout = null;
                 console.log('Joining room:', roomCode);
-                
+
                 // Validate peer is still valid before connecting
                 if (!peer || peer.destroyed) {
                     showToast('Connection Error', 'Peer connection was destroyed', 'error');
@@ -1154,16 +1229,16 @@
                     joinModal.classList.remove('hidden');
                     return;
                 }
-                
+
                 const conn = peer.connect(roomCode, {
                     reliable: true,
                     serialization: 'json',
                     metadata: { peerId: myId }
                 });
-                
+
                 // Track connection state
                 let connectionAttempted = false;
-                
+
                 // Set connection timeout
                 connectionTimeout = setTimeout(() => {
                     if (!conn.open && !connectionAttempted) {
@@ -1176,7 +1251,7 @@
                         joinModal.classList.remove('hidden');
                     }
                 }, 10000); // 10 second timeout
-                
+
                 conn.on('open', () => {
                     connectionAttempted = true;
                     // Clear timeout on successful connection
@@ -1190,7 +1265,7 @@
                     joinModal.classList.add('hidden');
                     showToast('Joined Room', `Connected to ${roomCode}`, 'success');
                 });
-                
+
                 conn.on('error', (err) => {
                     console.error('Connection error:', err);
                     connectionAttempted = true;
@@ -1202,20 +1277,20 @@
                     cleanupPeer();
                     joinModal.classList.remove('hidden');
                 });
-                
+
                 conn.on('close', () => {
                     console.log('Connection to host closed');
                     if (connections.has(roomCode)) {
                         removePeer(roomCode);
                         updateStatus('', 'Disconnected');
                         showToast('Disconnected', 'Host closed the connection - attempting reconnect...');
-                        
+
                         // Attempt to reconnect to host
                         scheduleReconnect(roomCode, true);
                     }
                 });
             });
-            
+
             // Handle incoming connections from other peers (multi-peer mesh)
             peer.on('connection', (conn) => {
                 // Only accept connections from peers in the same room
@@ -1226,7 +1301,7 @@
                 }
                 handleConnection(conn, false);
             });
-            
+
             peer.on('disconnected', () => {
                 console.warn('Peer disconnected from signaling server');
                 updateStatus('connecting', 'Reconnecting...');
@@ -1234,13 +1309,13 @@
                     peer.reconnect();
                 }
             });
-            
+
             peer.on('close', () => {
                 console.log('Peer connection closed');
                 updateStatus('', 'Offline');
                 cleanupConnections();
             });
-            
+
             peer.on('error', (err) => {
                 console.error('Peer error:', err);
                 clearTimeout(peerOpenTimeout);
@@ -1250,7 +1325,7 @@
                     connectionTimeout = null;
                 }
                 updateStatus('', 'Error');
-                
+
                 if (err.type === 'peer-unavailable') {
                     showToast('Room Not Found', 'The room code does not exist', 'error');
                 } else if (err.type === 'network' || err.type === 'disconnected') {
@@ -1265,7 +1340,7 @@
 
         function handleConnection(conn, isHostConnection = false) {
             const peerId = conn.peer;
-            
+
             // Prevent duplicate connections
             if (connections.has(peerId)) {
                 console.log('Already connected to peer:', peerId);
@@ -1274,7 +1349,7 @@
                 } catch (e) {}
                 return;
             }
-            
+
             // Prevent self-connections
             if (peer && peer.id === peerId) {
                 console.warn('Rejecting self-connection');
@@ -1283,14 +1358,14 @@
                 } catch (e) {}
                 return;
             }
-            
+
             // Track connection state
             let isConnected = false;
             let connectionTimer = null;
-            
+
             // Create data channel for drawing data
             const dataConn = conn;
-            
+
             connections.set(peerId, {
                 conn: conn,
                 dataConn: dataConn,
@@ -1298,7 +1373,7 @@
                 connectedAt: Date.now(),
                 lastPongReceived: Date.now()
             });
-            
+
             // Set a timeout for connection to be established
             connectionTimer = setTimeout(() => {
                 if (!isConnected) {
@@ -1306,23 +1381,23 @@
                     removePeer(peerId);
                 }
             }, 15000);
-            
+
             // Function to handle when connection is ready
             function onConnectionReady() {
                 if (isConnected) return; // Prevent double-triggering
                 isConnected = true;
                 clearTimeout(connectionTimer);
                 console.log('Data connection opened with:', peerId);
-                
+
                 // Update lastPongReceived
                 const connData = connections.get(peerId);
                 if (connData) {
                     connData.lastPongReceived = Date.now();
                 }
-                
+
                 updatePeersList();
                 showToast('Peer Connected', `New peer joined`, 'success');
-                
+
                 // Send current canvas state to new peer (if host) - with delay and chunking
                 if (isHost) {
                     setTimeout(() => {
@@ -1330,14 +1405,14 @@
                     }, 500);
                 }
             }
-            
+
             // Check if connection is already open
             if (dataConn.open) {
                 onConnectionReady();
             } else {
                 dataConn.on('open', onConnectionReady);
             }
-            
+
             dataConn.on('data', (data) => {
                 try {
                     handlePeerData(peerId, data);
@@ -1345,45 +1420,45 @@
                     console.error('Error handling peer data:', err);
                 }
             });
-            
+
             dataConn.on('close', () => {
                 console.log('Connection closed:', peerId);
                 clearTimeout(connectionTimer);
                 const wasConnected = isConnected;
                 removePeer(peerId);
-                
+
                 // Schedule reconnect if this was an established connection
                 if (wasConnected && roomCode) {
                     scheduleReconnect(peerId, isHostConnection);
                 }
             });
-            
+
             dataConn.on('error', (err) => {
                 console.error('Connection error:', err);
                 clearTimeout(connectionTimer);
                 removePeer(peerId);
             });
-            
+
             // Also monitor the peer connection state
             conn.on('close', () => {
                 console.log('Peer connection closed:', peerId);
                 clearTimeout(connectionTimer);
                 const wasConnected = isConnected;
                 removePeer(peerId);
-                
+
                 // Schedule reconnect if this was an established connection
                 if (wasConnected && roomCode) {
                     scheduleReconnect(peerId, isHostConnection);
                 }
             });
-            
+
             conn.on('error', (err) => {
                 console.error('Peer connection error:', err);
                 clearTimeout(connectionTimer);
                 removePeer(peerId);
             });
         }
-        
+
         // Send canvas state in chunks to avoid overwhelming the connection
         function sendCanvasState(dataConn) {
             try {
@@ -1391,9 +1466,9 @@
                     console.warn('Cannot send canvas state: connection not open');
                     return;
                 }
-                
+
                 const canvasData = canvas.toDataURL('image/png');
-                
+
                 // Check size - if too large, send a simplified message
                 const sizeMB = canvasData.length / 1024 / 1024;
                 if (sizeMB > 1) {
@@ -1419,21 +1494,25 @@
                 console.warn('Received invalid data from peer:', peerId);
                 return;
             }
-            
+
             const connData = connections.get(peerId);
             if (connData) {
                 connData.lastPongReceived = Date.now();
             }
-            
+
             switch (data.type) {
                 case 'draw':
-                    if (data.x1 !== undefined && data.y1 !== undefined && 
+                    if (data.x1 !== undefined && data.y1 !== undefined &&
                         data.x2 !== undefined && data.y2 !== undefined &&
                         data.color && data.size !== undefined) {
-                        draw(data.x1, data.y1, data.x2, data.y2, data.color, data.size);
+                        // Store stroke and draw it
+                        const stroke = { x1: data.x1, y1: data.y1, x2: data.x2, y2: data.y2, color: data.color, size: data.size };
+                        strokes.push(stroke);
+                        drawStroke(stroke);
                     }
                     break;
                 case 'clear':
+                    strokes = [];
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     break;
                 case 'cursor':
@@ -1484,7 +1563,7 @@
                 clearTimeout(pendingReconnects.get(peerId));
                 pendingReconnects.delete(peerId);
             }
-            
+
             removePeerCursor(peerId);
             const connData = connections.get(peerId);
             if (connData) {
@@ -1505,7 +1584,7 @@
             }
             connections.delete(peerId);
             updatePeersList();
-            
+
             // Only show toast if we had actual connections before
             if (connData) {
                 showToast('Peer Disconnected', 'Attempting to reconnect...');
@@ -1519,7 +1598,7 @@
         });
 
         // ==================== EVENT LISTENERS ====================
-        
+
         // Canvas drawing events
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', (e) => {
@@ -1527,7 +1606,8 @@
             // Broadcast cursor position (throttled)
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                broadcastCursor(coords.x, coords.y);
+                const worldPos = screenToWorld(coords.x, coords.y);
+                broadcastCursor(worldPos.x, worldPos.y);
             }
         });
         canvas.addEventListener('mouseup', stopDrawing);
@@ -1542,15 +1622,16 @@
             // Show cursor again when entering
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                broadcastCursor(coords.x, coords.y);
+                const worldPos = screenToWorld(coords.x, coords.y);
+                broadcastCursor(worldPos.x, worldPos.y);
             }
         });
-        
+
         // Touch events
         canvas.addEventListener('touchstart', startDrawing, { passive: false });
         canvas.addEventListener('touchmove', continueDrawing, { passive: false });
         canvas.addEventListener('touchend', stopDrawing);
-        
+
         // Color selection
         document.getElementById('colorPalette').addEventListener('click', (e) => {
             if (e.target.classList.contains('color-btn')) {
@@ -1559,7 +1640,7 @@
                 currentColor = e.target.dataset.color;
             }
         });
-        
+
         // Brush size selection
         document.getElementById('brushSizes').addEventListener('click', (e) => {
             const btn = e.target.closest('.size-btn');
@@ -1569,10 +1650,44 @@
                 currentSize = parseInt(btn.dataset.size);
             }
         });
-        
+
         // Clear canvas
         document.getElementById('clearBtn').addEventListener('click', clearCanvas);
         
+        // Pan tool
+        document.getElementById('panBtn').addEventListener('click', () => {
+            currentTool = currentTool === 'pan' ? 'pen' : 'pan';
+            updateToolButtons();
+        });
+        
+        // Reset view
+        document.getElementById('resetViewBtn').addEventListener('click', () => {
+            viewOffsetX = 0;
+            viewOffsetY = 0;
+            redrawCanvas();
+        });
+        
+        function updateToolButtons() {
+            document.getElementById('panBtn').classList.toggle('active', currentTool === 'pan');
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !e.repeat) {
+                e.preventDefault();
+                currentTool = 'pan';
+                updateToolButtons();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                currentTool = 'pen';
+                updateToolButtons();
+            }
+        });
+
         // Download canvas
         document.getElementById('downloadBtn').addEventListener('click', () => {
             const link = document.createElement('a');
@@ -1581,19 +1696,19 @@
             link.click();
             showToast('Downloaded', 'Canvas saved as PNG', 'success');
         });
-        
+
         // Join room modal
         document.getElementById('joinRoomBtn').addEventListener('click', () => {
             joinModal.classList.remove('hidden');
             roomCodeInput.focus();
         });
-        
+
         // Create new room
         document.getElementById('createRoomBtn').addEventListener('click', () => {
             const code = generateRoomCode();
             initPeer(code);
         });
-        
+
         // Connect to room
         document.getElementById('connectBtn').addEventListener('click', () => {
             const code = roomCodeInput.value.trim().toUpperCase();
@@ -1603,19 +1718,19 @@
                 showToast('Invalid Code', 'Please enter a 6-digit room code', 'error');
             }
         });
-        
+
         // Enter key on input
         roomCodeInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 document.getElementById('connectBtn').click();
             }
         });
-        
+
         // Input validation - only allow alphanumeric
         roomCodeInput.addEventListener('input', (e) => {
             e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
         });
-        
+
         // Copy room code
         document.getElementById('copyCodeBtn').addEventListener('click', () => {
             if (roomCode) {
