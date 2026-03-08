@@ -1,0 +1,16 @@
+{
+  "name": "CollaBoard - Collaborative Whiteboard",
+  "short_name": "CollaBoard",
+  "description": "Real-time collaborative whiteboard for drawing and brainstorming with peers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#58a6ff",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect x='10' y='10' width='172' height='172' rx='20' fill='%2358a6ff'/%3E%3Crect x='45' y='45' width='40' height='40' rx='8' fill='white'/%3E%3Crect x='107' y='45' width='40' height='40' rx='8' fill='white'/%3E%3Crect x='45' y='107' width='40' height='40' rx='8' fill='white'/%3E%3Crect x='107' y='107' width='40' height='40' rx='8' fill='white'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
