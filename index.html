@@ -2372,6 +2372,104 @@
             }
         });
 
+        // ==================== SERVICE WORKER REGISTRATION ====================
+        // Auto-refresh on hard reload and SW updates for real-time app
+        (function() {
+            // Hard reload detection using Navigation Timing API and performance
+            const isHardReload = (function() {
+                // Check if this is a hard reload via performance navigation
+                if (window.performance && performance.getEntriesByType) {
+                    const navEntries = performance.getEntriesByType('navigation');
+                    if (navEntries.length > 0) {
+                        // reload: 1 = normal reload, 2 = hard reload/back-forward
+                        return navEntries[0].type === 'reload' && navEntries[0].loadEventEnd - navEntries[0].loadEventStart < 50;
+                    }
+                }
+                // Fallback: check navigation.type (deprecated but still works)
+                if (performance.navigation) {
+                    return performance.navigation.type === 1;
+                }
+                return false;
+            })();
+            
+            // Register Service Worker
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('sw.js')
+                    .then((registration) => {
+                        console.log('[SW] Registered:', registration.scope);
+                        
+                        // Hard reload detection: Clear SW cache and force refresh
+                        if (isHardReload) {
+                            console.log('[SW] Hard reload detected');
+                            // Notify SW to clear cache
+                            if (registration.active) {
+                                registration.active.postMessage({ type: 'HARD_RELOAD_DETECTED' });
+                            }
+                            // Unregister all SWs and reload without cache
+                            navigator.serviceWorker.getRegistrations().then((registrations) => {
+                                Promise.all(registrations.map(r => r.unregister())).then(() => {
+                                    console.log('[SW] Unregistered for hard reload');
+                                    // Only reload once to prevent loop
+                                    if (!sessionStorage.getItem('hardReloadDone')) {
+                                        sessionStorage.setItem('hardReloadDone', '1');
+                                        window.location.reload();
+                                    } else {
+                                        sessionStorage.removeItem('hardReloadDone');
+                                    }
+                                });
+                            });
+                            return;
+                        }
+                        
+                        // Check for updates periodically (every 60 seconds for real-time app)
+                        setInterval(() => {
+                            registration.update();
+                        }, 60000);
+                        
+                        // Listen for updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            console.log('[SW] Update found, new worker installing');
+                            
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New version available
+                                    console.log('[SW] New version available');
+                                    showToast('Update Available', 'Refreshing to update...', 'info');
+                                    
+                                    // Skip waiting and refresh
+                                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                    
+                                    // Wait a moment then refresh
+                                    setTimeout(() => {
+                                        window.location.reload();
+                                    }, 1500);
+                                }
+                            });
+                        });
+                    })
+                    .catch((err) => {
+                        console.error('[SW] Registration failed:', err);
+                    });
+                
+                // Listen for messages from SW
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data && event.data.type === 'SW_ACTIVATED') {
+                        console.log('[SW] Activated at:', new Date(event.data.timestamp));
+                    }
+                });
+                
+                // Auto-refresh when SW controller changes (new version)
+                let refreshing = false;
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (refreshing) return;
+                    refreshing = true;
+                    console.log('[SW] Controller changed, refreshing page');
+                    window.location.reload();
+                });
+            }
+        })();
+
         // ==================== INITIALIZATION ====================
         // Load saved canvas on startup
         if (loadCanvasFromStorage()) {
