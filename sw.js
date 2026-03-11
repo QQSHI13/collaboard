@@ -163,16 +163,13 @@ self.addEventListener('message', (event) => {
       console.log('[SW] Hard reload detected from client');
       isHardReload = true;
       
-      // Clear the cache to force fresh content
-      event.waitUntil(
-        caches.delete(CACHE_NAME).then(() => {
-          console.log('[SW] Cache cleared due to hard reload');
-          // Re-populate with fresh fetch
-          return caches.open(CACHE_NAME).then((cache) => {
-            return cache.addAll(urlsToCache);
-          });
-        })
-      );
+      // Fire-and-forget - no waitUntil for MessageEvent
+      caches.delete(CACHE_NAME).then(() => {
+        console.log('[SW] Cache cleared due to hard reload');
+        return caches.open(CACHE_NAME).then((cache) => {
+          return cache.addAll(urlsToCache);
+        });
+      });
       break;
       
     default:
