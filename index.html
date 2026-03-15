@@ -695,7 +695,7 @@
     <div class="modal-overlay" id="joinModal">
         <div class="modal">
             <h2 class="modal-title">Join a Room</h2>
-            <p class="modal-subtitle">Enter a 6-digit room code to collaborate</p>
+            <p class="modal-subtitle">Enter a 6-character room code to collaborate</p>
             <input type="text" class="modal-input" id="roomCodeInput" maxlength="6" placeholder="------">
             <div class="modal-buttons">
                 <button class="btn btn-secondary" id="createRoomBtn">Create New</button>
@@ -2595,6 +2595,20 @@
                 // Auto-refresh when SW controller changes (new version)
                 let refreshing = false;
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (refreshing) return;
+                    refreshing = true;
+                    window.location.reload();
+                });
+            }
+        })();
+
+        // ==================== INITIALIZATION ====================
+        // Load saved canvas on startup
+        loadCanvasFromStorage();
+    </script>
+</body>
+</html>
+rchange', () => {
                     if (refreshing) return;
                     refreshing = true;
                     window.location.reload();
