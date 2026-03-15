@@ -10,13 +10,14 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='10' y='10' width='80' height='80' rx='10' fill='%2358a6ff'/%3E%3Crect x='25' y='25' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='55' y='25' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='25' y='55' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='55' y='55' width='20' height='20' rx='3' fill='white'/%3E%3C/svg%3E">
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js" onerror="window.peerLoadError=true"></script>
     <script>
-        // HIGH PRIORITY FIX: Check if PeerJS loaded correctly
-        window.peerJsLoaded = typeof window.Peer !== 'undefined';
-        if (!window.peerJsLoaded) {
-            document.addEventListener('DOMContentLoaded', function() {
+        // CRITICAL FIX: Move PeerJS check to DOMContentLoaded to fix race condition
+        // The script above loads asynchronously, so we must wait for DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', function() {
+            window.peerJsLoaded = typeof window.Peer !== 'undefined';
+            if (!window.peerJsLoaded || window.peerLoadError) {
                 alert('Failed to load PeerJS library. Please check your internet connection and refresh the page.');
-            });
-        }
+            }
+        });
     </script>
     <style>
         * {
@@ -1507,7 +1508,7 @@
             return x >= 0 && x <= rect.width && y >= 0 && y <= rect.height;
         }
 
-        function broadcastCursor(x, y) {
+        function broadcastCursor(screenX, screenY) {
             // Throttle cursor updates to prevent network flooding
             const now = Date.now();
             if (now - lastCursorBroadcast < CURSOR_THROTTLE_MS) {
@@ -1515,10 +1516,12 @@
             }
             lastCursorBroadcast = now;
 
-            // HIGH PRIORITY FIX: Include zoom level in cursor message
-            // Only broadcast if inside canvas
-            if (isInsideCanvas(x, y)) {
-                broadcast({ type: 'cursor', x, y, visible: true, zoom: zoomLevel });
+            // CRITICAL FIX: Fix coordinate system mismatch - isInsideCanvas expects screen coordinates
+            // Only broadcast if inside canvas viewport
+            if (isInsideCanvas(screenX, screenY)) {
+                // Convert screen coordinates to world coordinates for broadcast
+                const worldPos = screenToWorld(screenX, screenY);
+                broadcast({ type: 'cursor', x: worldPos.x, y: worldPos.y, visible: true });
             }
         }
 
@@ -1749,8 +1752,8 @@
 
             updateStatus('connecting', 'Connecting...');
 
-            // Use a shorter, valid peer ID
-            const myId = 'u' + Date.now().toString(36) + Math.random().toString(36).substring(2, 4);
+            // CRITICAL FIX: Add more randomness to Peer ID to prevent collisions
+            const myId = 'u' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8) + Math.random().toString(36).substring(2, 4);
             peer = new Peer(myId, getPeerConfig());
 
             // Handle peer open failure (set a timeout)
@@ -1913,6 +1916,11 @@
 
         function leaveRoom() {
             if (confirm('Leave the current room? Your canvas will be saved locally.')) {
+                // CRITICAL FIX: Clear pendingReconnects in leaveRoom to prevent reconnection attempts after leaving
+                pendingReconnects.forEach((timeoutId, peerId) => {
+                    clearTimeout(timeoutId);
+                });
+                pendingReconnects.clear();
                 cleanupPeer();
                 showToast('Left Room', 'You have left the room');
             }
@@ -2056,28 +2064,52 @@
         function sendCanvasState(dataConn) {
             try {
                 if (!dataConn || !dataConn.open) {
-                    
                     return;
                 }
 
-                const canvasData = canvas.toDataURL('image/png');
-
-                // Check size - if too large, send a simplified message
-                const sizeMB = canvasData.length / 1024 / 1024;
-                if (sizeMB > 1) {
-                    
-                    // Send a lower quality version
-                    const compressedData = canvas.toDataURL('image/jpeg', 0.5);
+                // CRITICAL FIX: Send strokes array instead of image data URL
+                // This allows proper reconstruction of the canvas on the peer's end
+                const strokesToSend = strokes.slice(-MAX_STROKES); // Send all current strokes
+                
+                // Send in chunks to avoid overwhelming the connection
+                const CHUNK_SIZE = 500;
+                if (strokesToSend.length <= CHUNK_SIZE) {
+                    // Send all at once if small enough
                     if (dataConn.open) {
-                        dataConn.send({ type: 'canvas', data: compressedData });
+                        dataConn.send({ 
+                            type: 'strokes', 
+                            strokes: strokesToSend,
+                            viewOffsetX: viewOffsetX,
+                            viewOffsetY: viewOffsetY,
+                            zoomLevel: zoomLevel
+                        });
                     }
                 } else {
-                    if (dataConn.open) {
-                        dataConn.send({ type: 'canvas', data: canvasData });
+                    // Send in chunks
+                    let index = 0;
+                    function sendNextChunk() {
+                        if (!dataConn.open) return;
+                        const chunk = strokesToSend.slice(index, index + CHUNK_SIZE);
+                        const isFirst = index === 0;
+                        const isLast = index + CHUNK_SIZE >= strokesToSend.length;
+                        dataConn.send({
+                            type: 'strokes',
+                            strokes: chunk,
+                            isChunk: true,
+                            isFirst: isFirst,
+                            isLast: isLast,
+                            viewOffsetX: isFirst ? viewOffsetX : undefined,
+                            viewOffsetY: isFirst ? viewOffsetY : undefined,
+                            zoomLevel: isFirst ? zoomLevel : undefined
+                        });
+                        index += CHUNK_SIZE;
+                        if (index < strokesToSend.length) {
+                            setTimeout(sendNextChunk, 50);
+                        }
                     }
+                    sendNextChunk();
                 }
             } catch (err) {
-                
                 // Don't close connection on canvas send failure - it's not critical
             }
         }
@@ -2112,6 +2144,9 @@
                             size: sanitizedSize 
                         };
                         strokes.push(stroke);
+                        // CRITICAL FIX: Add remote strokes to undo stack so they can be undone
+                        undoStack.push({ type: 'draw', stroke: stroke });
+                        updateUndoRedoButtons();
                         drawStroke(stroke);
                         debouncedSaveCanvas();
                     }
@@ -2124,16 +2159,9 @@
                     if (data.visible === false) {
                         removePeerCursor(peerId);
                     } else if (typeof data.x === 'number' && typeof data.y === 'number') {
-                        // HIGH PRIORITY FIX: Adjust cursor position based on zoom level if provided
-                        const remoteZoom = data.zoom || 1.0;
-                        if (remoteZoom !== zoomLevel) {
-                            // Convert to screen coordinates considering remote zoom
-                            const screenX = data.x * zoomLevel + viewOffsetX;
-                            const screenY = data.y * zoomLevel + viewOffsetY;
-                            updatePeerCursor(peerId, data.x, data.y);
-                        } else {
-                            updatePeerCursor(peerId, data.x, data.y);
-                        }
+                        // CRITICAL FIX: Received coordinates are world coordinates, updatePeerCursor expects world coordinates
+                        // (updatePeerCursor converts to screen coordinates internally)
+                        updatePeerCursor(peerId, data.x, data.y);
                     }
                     break;
                 case 'canvas':
@@ -2156,6 +2184,30 @@
                         
                     };
                     img.src = safeDataUrl;
+                    break;
+                case 'strokes':
+                    // CRITICAL FIX: Handle receiving strokes from host for proper canvas sync
+                    if (Array.isArray(data.strokes)) {
+                        if (data.isFirst || !data.isChunk) {
+                            // First chunk or single message - clear existing strokes and set view state
+                            strokes = [];
+                            if (data.viewOffsetX !== undefined) viewOffsetX = data.viewOffsetX;
+                            if (data.viewOffsetY !== undefined) viewOffsetY = data.viewOffsetY;
+                            if (data.zoomLevel !== undefined) zoomLevel = data.zoomLevel;
+                        }
+                        // Add all strokes from this chunk
+                        data.strokes.forEach(stroke => {
+                            if (stroke && typeof stroke.x1 === 'number' && typeof stroke.y1 === 'number') {
+                                // Sanitize the stroke
+                                stroke.color = sanitizeHtml(stroke.color || '#58a6ff').substring(0, 20);
+                                stroke.size = Math.max(1, Math.min(100, stroke.size || 2));
+                                strokes.push(stroke);
+                            }
+                        });
+                        redrawCanvas();
+                        debouncedSaveCanvas();
+                        updateZoomDisplay();
+                    }
                     break;
                 case 'ping':
                     // Respond with pong
@@ -2246,8 +2298,8 @@
             // Broadcast cursor position (throttled)
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                const worldPos = screenToWorld(coords.x, coords.y);
-                broadcastCursor(worldPos.x, worldPos.y);
+                // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
+                broadcastCursor(coords.x, coords.y);
             }
         });
         canvas.addEventListener('mouseup', stopDrawing);
@@ -2262,8 +2314,8 @@
             // Show cursor again when entering
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                const worldPos = screenToWorld(coords.x, coords.y);
-                broadcastCursor(worldPos.x, worldPos.y);
+                // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
+                broadcastCursor(coords.x, coords.y);
             }
         });
 
@@ -2455,7 +2507,8 @@
             if (code.length === 6) {
                 joinRoom(code);
             } else {
-                showToast('Invalid Code', 'Please enter a 6-digit room code', 'error');
+                // CRITICAL FIX: Fix room code validation message (6-character, not 6-digit)
+                showToast('Invalid Code', 'Please enter a 6-character room code', 'error');
             }
         });
 
@@ -2485,60 +2538,20 @@
         // ==================== SERVICE WORKER REGISTRATION ====================
         // Auto-refresh on hard reload and SW updates for real-time app
         (function() {
-            // Hard reload detection using Navigation Timing API and performance
-            const isHardReload = (function() {
-                // Check if this is a hard reload via performance navigation
-                if (window.performance && performance.getEntriesByType) {
-                    const navEntries = performance.getEntriesByType('navigation');
-                    if (navEntries.length > 0) {
-                        // reload: 1 = normal reload, 2 = hard reload/back-forward
-                        return navEntries[0].type === 'reload' && navEntries[0].loadEventEnd - navEntries[0].loadEventStart < 50;
-                    }
-                }
-                // Fallback: check navigation.type (deprecated but still works)
-                if (performance.navigation) {
-                    return performance.navigation.type === 1;
-                }
-                return false;
-            })();
+            // CRITICAL FIX: Check if we've already attempted reload in this session to prevent loops
+            if (sessionStorage.getItem('swReloadInProgress')) {
+                // Clear the flag and don't reload again
+                sessionStorage.removeItem('swReloadInProgress');
+                sessionStorage.removeItem('hardReloadCount');
+                sessionStorage.removeItem('hardReloadDone');
+            }
             
             // Register Service Worker
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('sw.js')
                     .then((registration) => {
-                        // Hard reload detection: Clear SW cache and force refresh
-                        if (isHardReload) {
-                            // HIGH PRIORITY FIX: Add counter to prevent hard reload loop
-                            const reloadCount = parseInt(sessionStorage.getItem('hardReloadCount') || '0', 10);
-                            if (reloadCount < 2) {
-                                sessionStorage.setItem('hardReloadCount', String(reloadCount + 1));
-                                // Notify SW to clear cache with attempt count
-                                if (registration.active) {
-                                    registration.active.postMessage({ 
-                                        type: 'HARD_RELOAD_DETECTED',
-                                        attemptCount: reloadCount + 1
-                                    });
-                                }
-                                // Unregister all SWs and reload without cache
-                                navigator.serviceWorker.getRegistrations().then((registrations) => {
-                                    Promise.all(registrations.map(r => r.unregister())).then(() => {
-                                        // Only reload once to prevent loop
-                                        if (!sessionStorage.getItem('hardReloadDone')) {
-                                            sessionStorage.setItem('hardReloadDone', '1');
-                                            window.location.reload();
-                                        } else {
-                                            sessionStorage.removeItem('hardReloadDone');
-                                            sessionStorage.removeItem('hardReloadCount');
-                                        }
-                                    });
-                                });
-                            } else {
-                                // Max attempts reached, clear counters
-                                sessionStorage.removeItem('hardReloadCount');
-                                sessionStorage.removeItem('hardReloadDone');
-                            }
-                            return;
-                        }
+                        // CRITICAL FIX: Remove hard reload auto-refresh logic to prevent reload loop
+                        // The service worker will handle updates normally
                         
                         // Check for updates periodically (every 60 seconds for real-time app)
                         setInterval(() => {
@@ -2553,6 +2566,9 @@
                                 if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                                     // New version available
                                     showToast('Update Available', 'Refreshing to update...', 'info');
+                                    
+                                    // Set flag to prevent loop detection
+                                    sessionStorage.setItem('swReloadInProgress', '1');
                                     
                                     // Skip waiting and refresh
                                     newWorker.postMessage({ type: 'SKIP_WAITING' });

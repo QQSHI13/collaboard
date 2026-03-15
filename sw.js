@@ -7,14 +7,6 @@ const urlsToCache = [
   '/index.html'
 ];
 
-// Hard reload detection: Check if this is a forced reload
-// In a hard reload (Ctrl+F5/Cmd+Shift+R), the navigation preload or
-// skipWaiting behavior helps us detect this
-let isHardReload = false;
-
-// HIGH PRIORITY FIX: Add counter limit to prevent hard reload loop
-const HARD_RELOAD_MAX_ATTEMPTS = 2;
-
 // ==================== INSTALL EVENT ====================
 self.addEventListener('install', (event) => {
   // Skip waiting immediately - this ensures the new SW activates right away
@@ -153,25 +145,6 @@ self.addEventListener('message', (event) => {
     case 'CHECK_FOR_UPDATE':
       // Trigger an update check
       self.registration.update();
-      break;
-      
-    case 'HARD_RELOAD_DETECTED':
-      // HIGH PRIORITY FIX: Add counter limit (max 2 attempts) to prevent hard reload loop
-      const reloadCount = parseInt(event.data.attemptCount || '0', 10);
-      if (reloadCount >= HARD_RELOAD_MAX_ATTEMPTS) {
-        // Max attempts reached, don't reload again
-        return;
-      }
-      
-      // Client detected a hard reload - clear cache to ensure fresh content
-      isHardReload = true;
-      
-      // Fire-and-forget - no waitUntil for MessageEvent
-      caches.delete(CACHE_NAME).then(() => {
-        return caches.open(CACHE_NAME).then((cache) => {
-          return cache.addAll(urlsToCache);
-        });
-      });
       break;
       
     default:
