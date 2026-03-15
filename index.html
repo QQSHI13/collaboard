@@ -1144,7 +1144,8 @@
                 clientY = e.clientY;
             } else {
                 // CRITICAL FIX: Return fallback if touches empty - prevents crash
-                return { x: lastX || 0, y: lastY || 0 };
+                // Return 0,0 in screen coordinates (not world coordinates)
+                return { x: 0, y: 0 };
             }
             
             return {
@@ -1962,21 +1963,22 @@
             // Create data channel for drawing data
             const dataConn = conn;
 
-            connections.set(peerId, {
-                conn: conn,
-                dataConn: dataConn,
-                isHostConnection: isHostConnection,
-                connectedAt: Date.now(),
-                lastPongReceived: Date.now(),
-                handlers: handlers // Store handlers for cleanup
-            });
-
             // Set a timeout for connection to be established
             connectionTimer = setTimeout(() => {
                 if (!isConnected) {
                     removePeer(peerId);
                 }
             }, 15000);
+
+            connections.set(peerId, {
+                conn: conn,
+                dataConn: dataConn,
+                isHostConnection: isHostConnection,
+                connectedAt: Date.now(),
+                lastPongReceived: Date.now(),
+                handlers: handlers, // Store handlers for cleanup
+                connectionTimer: connectionTimer // Store timer for cleanup
+            });
 
             // Function to handle when connection is ready
             function onConnectionReady() {
@@ -2089,22 +2091,27 @@
                     let index = 0;
                     function sendNextChunk() {
                         if (!dataConn.open) return;
-                        const chunk = strokesToSend.slice(index, index + CHUNK_SIZE);
-                        const isFirst = index === 0;
-                        const isLast = index + CHUNK_SIZE >= strokesToSend.length;
-                        dataConn.send({
-                            type: 'strokes',
-                            strokes: chunk,
-                            isChunk: true,
-                            isFirst: isFirst,
-                            isLast: isLast,
-                            viewOffsetX: isFirst ? viewOffsetX : undefined,
-                            viewOffsetY: isFirst ? viewOffsetY : undefined,
-                            zoomLevel: isFirst ? zoomLevel : undefined
-                        });
-                        index += CHUNK_SIZE;
-                        if (index < strokesToSend.length) {
-                            setTimeout(sendNextChunk, 50);
+                        try {
+                            const chunk = strokesToSend.slice(index, index + CHUNK_SIZE);
+                            const isFirst = index === 0;
+                            const isLast = index + CHUNK_SIZE >= strokesToSend.length;
+                            dataConn.send({
+                                type: 'strokes',
+                                strokes: chunk,
+                                isChunk: true,
+                                isFirst: isFirst,
+                                isLast: isLast,
+                                viewOffsetX: isFirst ? viewOffsetX : undefined,
+                                viewOffsetY: isFirst ? viewOffsetY : undefined,
+                                zoomLevel: isFirst ? zoomLevel : undefined
+                            });
+                            index += CHUNK_SIZE;
+                            if (index < strokesToSend.length) {
+                                setTimeout(sendNextChunk, 50);
+                            }
+                        } catch (e) {
+                            // Stop sending if connection fails
+                            return;
                         }
                     }
                     sendNextChunk();
@@ -2235,17 +2242,27 @@
             removePeerCursor(peerId);
             const connData = connections.get(peerId);
             if (connData) {
+                // CRITICAL FIX: Clear connection timer to prevent delayed removePeer calls
+                if (connData.connectionTimer) {
+                    clearTimeout(connData.connectionTimer);
+                }
+                
                 // CRITICAL FIX: Remove event handlers before closing to prevent memory leaks
+                // PeerJS .off() may not be available in all versions, wrap in try-catch
                 if (connData.handlers) {
-                    if (connData.dataConn) {
-                        connData.dataConn.off('open', connData.handlers.onDataConnOpen);
-                        connData.dataConn.off('data', connData.handlers.onDataConnData);
-                        connData.dataConn.off('close', connData.handlers.onDataConnClose);
-                        connData.dataConn.off('error', connData.handlers.onDataConnError);
-                    }
-                    if (connData.conn) {
-                        connData.conn.off('close', connData.handlers.onConnClose);
-                        connData.conn.off('error', connData.handlers.onConnError);
+                    try {
+                        if (connData.dataConn && typeof connData.dataConn.off === 'function') {
+                            connData.dataConn.off('open', connData.handlers.onDataConnOpen);
+                            connData.dataConn.off('data', connData.handlers.onDataConnData);
+                            connData.dataConn.off('close', connData.handlers.onDataConnClose);
+                            connData.dataConn.off('error', connData.handlers.onDataConnError);
+                        }
+                        if (connData.conn && typeof connData.conn.off === 'function') {
+                            connData.conn.off('close', connData.handlers.onConnClose);
+                            connData.conn.off('error', connData.handlers.onConnError);
+                        }
+                    } catch (e) {
+                        // Silently handle if .off() is not available
                     }
                 }
                 
@@ -2595,20 +2612,6 @@
                 // Auto-refresh when SW controller changes (new version)
                 let refreshing = false;
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
-                    if (refreshing) return;
-                    refreshing = true;
-                    window.location.reload();
-                });
-            }
-        })();
-
-        // ==================== INITIALIZATION ====================
-        // Load saved canvas on startup
-        loadCanvasFromStorage();
-    </script>
-</body>
-</html>
-rchange', () => {
                     if (refreshing) return;
                     refreshing = true;
                     window.location.reload();
