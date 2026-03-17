@@ -823,7 +823,7 @@
         let isPanning = false;
         let panStartX = 0;
         let panStartY = 0;
-        let currentTool = 'pen'; // 'pen', 'eraser', 'pan'
+        let currentTool = 'pen'; // 'pen', 'pan' (eraser not yet implemented)
 
         // Throttling for cursor broadcasts
         let lastCursorBroadcast = 0;
@@ -1013,7 +1013,6 @@
 
         // MEDIUM FIX: Max toast count to prevent UI clutter
         const MAX_TOASTS = 5;
-        let toastQueue = [];
 
         // SECURITY FIX: Use textContent instead of innerHTML to prevent XSS
         function showToast(title, message, type = 'info') {
@@ -1078,6 +1077,11 @@
         }
 
         // ==================== CANVAS SETUP ====================
+        // CRITICAL FIX: Track device pixel ratio for high-DPI displays
+        let devicePixelRatio = window.devicePixelRatio || 1;
+        let canvasBackingStoreWidth = 0;
+        let canvasBackingStoreHeight = 0;
+
         function resizeCanvas() {
             // Debounce resize to prevent race conditions
             if (resizeTimeout) {
@@ -1085,42 +1089,56 @@
             }
             resizeTimeout = setTimeout(() => {
                 const rect = container.getBoundingClientRect();
-                const newWidth = Math.floor(rect.width);
-                const newHeight = Math.floor(rect.height);
+                const cssWidth = Math.floor(rect.width);
+                const cssHeight = Math.floor(rect.height);
+                
+                // CRITICAL FIX: Account for high-DPI displays
+                devicePixelRatio = window.devicePixelRatio || 1;
+                const newWidth = Math.floor(cssWidth * devicePixelRatio);
+                const newHeight = Math.floor(cssHeight * devicePixelRatio);
 
                 // Only resize if dimensions actually changed
-                if (canvas.width === newWidth && canvas.height === newHeight) {
+                if (canvasBackingStoreWidth === newWidth && canvasBackingStoreHeight === newHeight) {
                     return;
                 }
 
-                // Save current canvas content if any
-                let savedImage = null;
-                if (canvas.width > 0 && canvas.height > 0) {
-                    try {
-                        savedImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    } catch (e) {
-                        // Could not save canvas state, will redraw
-                    }
-                }
+                // Save strokes before resize - we'll redraw them
+                const hadStrokes = strokes.length > 0;
 
+                // Set canvas backing store size
+                canvasBackingStoreWidth = newWidth;
+                canvasBackingStoreHeight = newHeight;
                 canvas.width = newWidth;
                 canvas.height = newHeight;
+                
+                // CRITICAL FIX: Scale CSS size to match backing store
+                canvas.style.width = cssWidth + 'px';
+                canvas.style.height = cssHeight + 'px';
+                
+                // CRITICAL FIX: Scale context to account for pixel ratio
+                ctx.scale(devicePixelRatio, devicePixelRatio);
 
-                // Restore content or redraw all strokes
-                if (savedImage) {
-                    try {
-                        ctx.putImageData(savedImage, 0, 0);
-                    } catch (e) {
-                        redrawCanvas();
-                    }
-                } else {
-                    redrawCanvas();
-                }
+                // Redraw all strokes
+                redrawCanvas();
             }, 100); // 100ms debounce
         }
 
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+
+        // CRITICAL FIX: Handle devicePixelRatio changes when window moves between displays
+        // This happens when user drags window from Retina to non-Retina display or vice versa
+        let lastDevicePixelRatio = window.devicePixelRatio || 1;
+        const dprMediaQuery = window.matchMedia(`screen and (resolution: ${lastDevicePixelRatio}dppx)`);
+        if (dprMediaQuery.addEventListener) {
+            dprMediaQuery.addEventListener('change', () => {
+                const newDpr = window.devicePixelRatio || 1;
+                if (newDpr !== lastDevicePixelRatio) {
+                    lastDevicePixelRatio = newDpr;
+                    resizeCanvas();
+                }
+            });
+        }
 
         // ==================== DRAWING FUNCTIONS ====================
         
@@ -1242,24 +1260,16 @@
             // MEMORY LEAK FIX: Limit stroke storage
             if (strokes.length >= MAX_STROKES) {
                 // Remove oldest strokes in batch
-                const prunedStrokes = strokes.splice(0, STROKE_PRUNE_BATCH);
+                const prunedCount = Math.min(STROKE_PRUNE_BATCH, strokes.length);
+                strokes.splice(0, prunedCount);
                 
-                // CRITICAL FIX: Filter undo/redo stacks to remove references to pruned strokes
-                // This prevents undo/redo corruption when strokes are pruned
-                undoStack = undoStack.filter(action => {
-                    if (action.type === 'draw' && prunedStrokes.includes(action.stroke)) {
-                        return false; // Remove references to pruned strokes
-                    }
-                    return true;
-                });
-                redoStack = redoStack.filter(action => {
-                    if (action.type === 'draw' && prunedStrokes.includes(action.stroke)) {
-                        return false; // Remove references to pruned strokes
-                    }
-                    return true;
-                });
-                
+                // CRITICAL FIX: When strokes are pruned, clear undo/redo stacks entirely
+                // to prevent corruption. User can't undo beyond visible strokes anyway.
+                undoStack = [];
+                redoStack = [];
                 updateUndoRedoButtons();
+                
+                showToast('Canvas Limit', 'Reached maximum canvas size. Undo history cleared.', 'info');
             }
             strokes.push(stroke);
             
@@ -1295,7 +1305,11 @@
             const s2 = worldToScreen(stroke.x2, stroke.y2);
 
             ctx.strokeStyle = stroke.color;
-            ctx.lineWidth = Math.max(1, stroke.size * zoomLevel);
+            // CRITICAL FIX: Account for device pixel ratio in line width
+            // The context is scaled, so we need to divide by devicePixelRatio
+            ctx.lineWidth = Math.max(0.5, (stroke.size * zoomLevel) / devicePixelRatio);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
             ctx.beginPath();
             ctx.moveTo(s1.x, s1.y);
             ctx.lineTo(s2.x, s2.y);
@@ -1341,7 +1355,10 @@
         }
 
         function redrawCanvas() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // CRITICAL FIX: Clear using CSS dimensions (backing store handled by scale)
+            ctx.clearRect(0, 0, canvas.width / devicePixelRatio, canvas.height / devicePixelRatio);
+            
+            // CRITICAL FIX: Always set line styles before drawing
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
@@ -1366,7 +1383,8 @@
             }
 
             strokes = [];
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // CRITICAL FIX: Use correct dimensions for high-DPI
+            ctx.clearRect(0, 0, canvas.width / devicePixelRatio, canvas.height / devicePixelRatio);
             broadcast({ type: 'clear' });
             clearCanvasStorage();
             showToast('Canvas Cleared', 'The whiteboard has been cleared');
@@ -1462,6 +1480,11 @@
         function broadcast(data) {
             // CRITICAL FIX: Use state lock or queue to prevent race conditions
             if (isBroadcasting) {
+                // CRITICAL FIX: Limit pending broadcasts queue size to prevent memory leak
+                if (pendingBroadcasts.length >= 100) {
+                    // Drop oldest broadcast if queue is full
+                    pendingBroadcasts.shift();
+                }
                 pendingBroadcasts.push(data);
                 return;
             }
@@ -1674,8 +1697,8 @@
                     // Room code exists, generate a new one instead of joining
                     showToast('Code Taken', 'Generating new room code...', 'info');
                     cleanupPeer();
-                    // Try again with new code
-                    setTimeout(() => initPeer(generateRoomCode()), 500);
+                    // CRITICAL FIX: Use setTimeout to prevent stack overflow on repeated collisions
+                    setTimeout(() => initPeer(generateRoomCode()), 100);
                 } else if (err.type === 'network' || err.type === 'disconnected' || err.type === 'server-error') {
                     // Try next server
                     reconnectAttempts++;
@@ -2151,16 +2174,16 @@
                             size: sanitizedSize 
                         };
                         strokes.push(stroke);
-                        // CRITICAL FIX: Add remote strokes to undo stack so they can be undone
-                        undoStack.push({ type: 'draw', stroke: stroke });
-                        updateUndoRedoButtons();
+                        // CRITICAL FIX: Remote strokes should NOT be added to local undo stack
+                        // Undo only affects local user's own actions for predictable behavior
                         drawStroke(stroke);
                         debouncedSaveCanvas();
                     }
                     break;
                 case 'clear':
                     strokes = [];
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    // CRITICAL FIX: Account for device pixel ratio in clear rect
+                    ctx.clearRect(0, 0, canvas.width / devicePixelRatio, canvas.height / devicePixelRatio);
                     break;
                 case 'cursor':
                     if (data.visible === false) {
@@ -2469,8 +2492,8 @@
                 leaveRoom();
             }
             
-            // Help: ?
-            if (e.key === '?' || e.key === 'Slash') {
+            // Help: ? (works with both '?' key and Shift+/)
+            if (e.key === '?' || (e.shiftKey && e.key === '/')) {
                 e.preventDefault();
                 if (shortcutsModal.classList.contains('hidden')) {
                     shortcutsModal.classList.remove('hidden');
@@ -2499,9 +2522,40 @@
 
         // Download canvas
         document.getElementById('downloadBtn').addEventListener('click', () => {
+            // CRITICAL FIX: Create a temporary canvas to export at proper resolution
+            // The main canvas is scaled for high-DPI, we need to export at CSS pixel size
+            const exportCanvas = document.createElement('canvas');
+            const cssWidth = Math.floor(canvas.width / devicePixelRatio);
+            const cssHeight = Math.floor(canvas.height / devicePixelRatio);
+            exportCanvas.width = cssWidth;
+            exportCanvas.height = cssHeight;
+            const exportCtx = exportCanvas.getContext('2d');
+            
+            // Draw background
+            exportCtx.fillStyle = '#0d1117';
+            exportCtx.fillRect(0, 0, cssWidth, cssHeight);
+            
+            // Draw all strokes at proper scale
+            exportCtx.lineCap = 'round';
+            exportCtx.lineJoin = 'round';
+            strokes.forEach(stroke => {
+                // Transform world coordinates to export canvas coordinates
+                const x1 = stroke.x1 * zoomLevel + viewOffsetX;
+                const y1 = stroke.y1 * zoomLevel + viewOffsetY;
+                const x2 = stroke.x2 * zoomLevel + viewOffsetX;
+                const y2 = stroke.y2 * zoomLevel + viewOffsetY;
+                
+                exportCtx.strokeStyle = stroke.color;
+                exportCtx.lineWidth = Math.max(1, stroke.size * zoomLevel);
+                exportCtx.beginPath();
+                exportCtx.moveTo(x1, y1);
+                exportCtx.lineTo(x2, y2);
+                exportCtx.stroke();
+            });
+            
             const link = document.createElement('a');
             link.download = `whiteboard-${roomCode || 'export'}-${Date.now()}.png`;
-            link.href = canvas.toDataURL();
+            link.href = exportCanvas.toDataURL();
             link.click();
             showToast('Downloaded', 'Canvas saved as PNG', 'success');
         });
@@ -2531,6 +2585,22 @@
 
         // Leave room
         leaveRoomBtn.addEventListener('click', leaveRoom);
+
+        // CRITICAL FIX: Click outside modal to close (standard UX pattern)
+        joinModal.addEventListener('click', (e) => {
+            if (e.target === joinModal) {
+                // Only close if not currently connecting
+                if (!peer || !peer.open) {
+                    joinModal.classList.add('hidden');
+                }
+            }
+        });
+
+        shortcutsModal.addEventListener('click', (e) => {
+            if (e.target === shortcutsModal) {
+                shortcutsModal.classList.add('hidden');
+            }
+        });
 
         // Enter key on input
         roomCodeInput.addEventListener('keypress', (e) => {
@@ -2563,6 +2633,9 @@
                 sessionStorage.removeItem('hardReloadDone');
             }
             
+            // CRITICAL FIX: Track SW update interval for cleanup
+            let swUpdateInterval = null;
+            
             // Register Service Worker
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('sw.js')
@@ -2571,7 +2644,7 @@
                         // The service worker will handle updates normally
                         
                         // Check for updates periodically (every 60 seconds for real-time app)
-                        setInterval(() => {
+                        swUpdateInterval = setInterval(() => {
                             registration.update();
                         }, 60000);
                         
@@ -2616,12 +2689,26 @@
                     refreshing = true;
                     window.location.reload();
                 });
+                
+                // CRITICAL FIX: Clear SW update interval on page unload
+                window.addEventListener('beforeunload', () => {
+                    if (swUpdateInterval) {
+                        clearInterval(swUpdateInterval);
+                    }
+                });
             }
         })();
 
         // ==================== INITIALIZATION ====================
-        // Load saved canvas on startup
-        loadCanvasFromStorage();
+        // CRITICAL FIX: Wait for canvas to be fully initialized before loading saved data
+        // This ensures devicePixelRatio and canvas dimensions are correct
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                setTimeout(loadCanvasFromStorage, 0);
+            });
+        } else {
+            setTimeout(loadCanvasFromStorage, 0);
+        }
     </script>
 </body>
 </html>
