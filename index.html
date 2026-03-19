@@ -1024,11 +1024,20 @@
         const MAX_TOASTS = 5;
 
         // SECURITY FIX: Use textContent instead of innerHTML to prevent XSS
+        // CRITICAL FIX: Track toast timeouts for cleanup (memory leak fix)
+        const toastTimeouts = new Map();
+        
         function showToast(title, message, type = 'info') {
             // MEDIUM FIX: Remove oldest toast if at max
             const existingToasts = toastContainer.querySelectorAll('.toast');
             if (existingToasts.length >= MAX_TOASTS) {
-                existingToasts[0].remove();
+                const oldestToast = existingToasts[0];
+                // CRITICAL FIX: Clear timeout before removing to prevent memory leak
+                if (toastTimeouts.has(oldestToast)) {
+                    clearTimeout(toastTimeouts.get(oldestToast));
+                    toastTimeouts.delete(oldestToast);
+                }
+                oldestToast.remove();
             }
             
             const toast = document.createElement('div');
@@ -1045,7 +1054,13 @@
             toast.appendChild(titleEl);
             toast.appendChild(msgEl);
             toastContainer.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            
+            // CRITICAL FIX: Track timeout and clean up on removal
+            const timeoutId = setTimeout(() => {
+                toastTimeouts.delete(toast);
+                toast.remove();
+            }, 3000);
+            toastTimeouts.set(toast, timeoutId);
         }
 
         function updateStatus(status, text) {
@@ -1152,7 +1167,7 @@
         // ==================== DRAWING FUNCTIONS ====================
         
         // FIX: Handle both touches and changedTouches for touch events
-        // CRITICAL FIX: Add bounds check - return fallback if touches empty
+        // CRITICAL FIX: Add bounds check - return null if touches empty (Issue 29 fix)
         function getCoordinates(e) {
             const rect = canvas.getBoundingClientRect();
             let clientX, clientY;
@@ -1170,9 +1185,8 @@
                 clientX = e.clientX;
                 clientY = e.clientY;
             } else {
-                // CRITICAL FIX: Return fallback if touches empty - prevents crash
-                // Return 0,0 in screen coordinates (not world coordinates)
-                return { x: 0, y: 0 };
+                // CRITICAL FIX: Return null instead of {x:0,y:0} to prevent drawing at origin (Issue 29)
+                return null;
             }
             
             return {
@@ -1241,6 +1255,8 @@
             e.preventDefault();
 
             const coords = getCoordinates(e);
+            // CRITICAL FIX: Handle null coordinates (Issue 29)
+            if (!coords) return;
 
             // Check for pan tool or space key or middle mouse
             if (currentTool === 'pan' || e.button === 1 || e.buttons === 4) {
@@ -1336,6 +1352,8 @@
             if (isPanning) {
                 e.preventDefault();
                 const coords = getCoordinates(e);
+                // CRITICAL FIX: Handle null coordinates (Issue 29)
+                if (!coords) return;
                 viewOffsetX = coords.x - panStartX;
                 viewOffsetY = coords.y - panStartY;
                 redrawCanvas();
@@ -1346,6 +1364,8 @@
             e.preventDefault();
 
             const coords = getCoordinates(e);
+            // CRITICAL FIX: Handle null coordinates (Issue 29)
+            if (!coords) return;
             const worldPos = screenToWorld(coords.x, coords.y);
 
             const stroke = { x1: lastX, y1: lastY, x2: worldPos.x, y2: worldPos.y, color: currentColor, size: currentSize };
@@ -1421,7 +1441,9 @@
             updateUndoRedoButtons();
             debouncedSaveCanvas();
             
-            // Notify peers of undo (optional - for now just local)
+            // HIGH FIX: Broadcast undo to peers (Issue 30)
+            broadcast({ type: 'undo', actionType: action.type });
+            
             showToast('Undo', 'Action undone');
         }
 
@@ -1443,7 +1465,8 @@
             updateUndoRedoButtons();
             debouncedSaveCanvas();
             
-            showToast('Redo', 'Action redone');
+            // HIGH FIX: Broadcast redo to peers (Issue 30)
+            broadcast({ type: 'redo', actionType: action.type, stroke: action.stroke, strokes: action.strokes });
         }
 
         function updateUndoRedoButtons() {
@@ -1485,12 +1508,13 @@
         // CRITICAL FIX: Add state lock to prevent race conditions in broadcast
         let isBroadcasting = false;
         const pendingBroadcasts = [];
+        const MAX_PENDING_BROADCASTS = 100; // CRITICAL FIX: Limit queue size to prevent memory leak
 
         function broadcast(data) {
             // CRITICAL FIX: Use state lock or queue to prevent race conditions
             if (isBroadcasting) {
                 // CRITICAL FIX: Limit pending broadcasts queue size to prevent memory leak
-                if (pendingBroadcasts.length >= 100) {
+                if (pendingBroadcasts.length >= MAX_PENDING_BROADCASTS) {
                     // Drop oldest broadcast if queue is full
                     pendingBroadcasts.shift();
                 }
@@ -1528,7 +1552,7 @@
             } finally {
                 isBroadcasting = false;
                 
-                // Process any pending broadcasts
+                // Process any pending broadcasts - use setTimeout to prevent stack overflow
                 if (pendingBroadcasts.length > 0) {
                     const nextData = pendingBroadcasts.shift();
                     setTimeout(() => broadcast(nextData), 0);
@@ -2259,6 +2283,39 @@
                 case 'pong':
                     // Keepalive response, connection is alive
                     break;
+                case 'undo':
+                    // HIGH FIX: Handle undo from peer (Issue 30)
+                    if (data.actionType === 'draw' && strokes.length > 0) {
+                        // Remove the last stroke (which should be the one the peer just drew)
+                        strokes.pop();
+                        redrawCanvas();
+                        debouncedSaveCanvas();
+                    } else if (data.actionType === 'clear') {
+                        // Cannot restore - peer cleared, we don't have their old strokes
+                        // Just notify user
+                        showToast('Peer Undid', 'Clear action undone (canvas may differ)');
+                    }
+                    break;
+                case 'redo':
+                    // HIGH FIX: Handle redo from peer (Issue 30)
+                    if (data.actionType === 'draw' && data.stroke) {
+                        // Re-add the stroke
+                        const stroke = {
+                            x1: data.stroke.x1,
+                            y1: data.stroke.y1,
+                            x2: data.stroke.x2,
+                            y2: data.stroke.y2,
+                            color: sanitizeHtml(data.stroke.color || '#58a6ff').substring(0, 20),
+                            size: Math.max(1, Math.min(100, data.stroke.size || 2))
+                        };
+                        strokes.push(stroke);
+                        drawStroke(stroke);
+                        debouncedSaveCanvas();
+                    } else if (data.actionType === 'clear') {
+                        strokes = [];
+                        ctx.clearRect(0, 0, canvas.width / devicePixelRatio, canvas.height / devicePixelRatio);
+                    }
+                    break;
                 default:
                     
             }
@@ -2347,8 +2404,11 @@
             // Broadcast cursor position (throttled)
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
-                broadcastCursor(coords.x, coords.y);
+                // CRITICAL FIX: Handle null coordinates (Issue 29)
+                if (coords) {
+                    // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
+                    broadcastCursor(coords.x, coords.y);
+                }
             }
         });
         canvas.addEventListener('mouseup', stopDrawing);
@@ -2363,8 +2423,11 @@
             // Show cursor again when entering
             if (connections.size > 0) {
                 const coords = getCoordinates(e);
-                // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
-                broadcastCursor(coords.x, coords.y);
+                // CRITICAL FIX: Handle null coordinates (Issue 29)
+                if (coords) {
+                    // CRITICAL FIX: Pass screen coordinates to broadcastCursor (it converts to world internally)
+                    broadcastCursor(coords.x, coords.y);
+                }
             }
         });
 
