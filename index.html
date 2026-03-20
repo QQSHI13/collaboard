@@ -1884,13 +1884,13 @@
                 });
 
                 conn.on('close', () => {
-                    if (connections.has(roomCode)) {
-                        removePeer(roomCode);
+                    if (connections.has(conn.peer)) {
+                        removePeer(conn.peer);
                         updateStatus('', 'Disconnected');
                         showToast('Disconnected', 'Host closed the connection - attempting reconnect...');
 
                         // Attempt to reconnect to host
-                        scheduleReconnect(roomCode, true);
+                        scheduleReconnect(conn.peer, true);
                     }
                 });
             });
