@@ -1139,7 +1139,8 @@
                 canvas.style.width = cssWidth + 'px';
                 canvas.style.height = cssHeight + 'px';
                 
-                // CRITICAL FIX: Scale context to account for pixel ratio
+                // CRITICAL FIX: Reset transform before scaling to prevent cumulative scale on resize
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(devicePixelRatio, devicePixelRatio);
 
                 // Redraw all strokes
