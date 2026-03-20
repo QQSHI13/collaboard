@@ -2250,11 +2250,9 @@
                     // CRITICAL FIX: Handle receiving strokes from host for proper canvas sync
                     if (Array.isArray(data.strokes)) {
                         if (data.isFirst || !data.isChunk) {
-                            // First chunk or single message - clear existing strokes and set view state
+                            // First chunk or single message - clear existing strokes only.
+                            // Do NOT overwrite the peer's own viewport with the host's.
                             strokes = [];
-                            if (data.viewOffsetX !== undefined) viewOffsetX = data.viewOffsetX;
-                            if (data.viewOffsetY !== undefined) viewOffsetY = data.viewOffsetY;
-                            if (data.zoomLevel !== undefined) zoomLevel = data.zoomLevel;
                         }
                         // Add all strokes from this chunk
                         data.strokes.forEach(stroke => {
