@@ -850,6 +850,9 @@
         // Connection state tracking for reconnection
         const pendingReconnects = new Map(); // peerId -> timeoutId
 
+        // SW update interval – declared here so the single beforeunload handler can clear it
+        let swUpdateInterval = null;
+
         // ==================== SECURITY: INPUT SANITIZATION ====================
         function sanitizeHtml(text) {
             if (typeof text !== 'string') return '';
@@ -2383,15 +2386,10 @@
 
         // ==================== CLEANUP ON PAGE UNLOAD ====================
         window.addEventListener('beforeunload', () => {
-            // MEDIUM FIX: Clear resizeTimeout in beforeunload handler
-            if (resizeTimeout) {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = null;
-            }
-            if (touchDrawTimeout) {
-                clearTimeout(touchDrawTimeout);
-                touchDrawTimeout = null;
-            }
+            if (resizeTimeout) { clearTimeout(resizeTimeout); resizeTimeout = null; }
+            if (touchDrawTimeout) { clearTimeout(touchDrawTimeout); touchDrawTimeout = null; }
+            if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
+            if (swUpdateInterval) { clearInterval(swUpdateInterval); swUpdateInterval = null; }
             saveCanvasToStorage();
             cleanupConnections();
             cleanupPeer();
@@ -2707,9 +2705,6 @@
                 sessionStorage.removeItem('hardReloadDone');
             }
             
-            // CRITICAL FIX: Track SW update interval for cleanup
-            let swUpdateInterval = null;
-            
             // Register Service Worker
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('sw.js')
@@ -2764,12 +2759,6 @@
                     window.location.reload();
                 });
                 
-                // CRITICAL FIX: Clear SW update interval on page unload
-                window.addEventListener('beforeunload', () => {
-                    if (swUpdateInterval) {
-                        clearInterval(swUpdateInterval);
-                    }
-                });
             }
         })();
 
