@@ -2596,6 +2596,17 @@
             }
         });
 
+        // BUG-012: Reset space-pan mode when window loses focus (e.g. Alt+Tab).
+        // Without this the Space keyup is never received and pan mode stays stuck.
+        window.addEventListener('blur', () => {
+            if (currentTool === 'pan') {
+                currentTool = 'pen';
+                updateToolButtons();
+            }
+            isPanning = false;
+            canvas.style.cursor = 'crosshair';
+        });
+
         // Download canvas
         document.getElementById('downloadBtn').addEventListener('click', () => {
             // CRITICAL FIX: Create a temporary canvas to export at proper resolution
