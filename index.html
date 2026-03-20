@@ -1278,10 +1278,12 @@
             drawStroke(stroke);
 
             // Broadcast to peers
-            broadcastDraw(lastX, lastY, lastX, lastY, currentColor, currentSize);
+            broadcastDraw(lastX, lastY, lastX, lastY, currentColor, currentSize, stroke.id);
         }
 
         function addStroke(stroke) {
+            // Assign unique ID for cross-peer undo identity
+            if (stroke.id === undefined) stroke.id = ++strokeIdCounter;
             // MEMORY LEAK FIX: Limit stroke storage
             if (strokes.length >= MAX_STROKES) {
                 // Remove oldest strokes in batch
@@ -1341,12 +1343,7 @@
             ctx.stroke();
         }
 
-        function draw(x1, y1, x2, y2, color, size) {
-            // Store stroke in world coordinates
-            const stroke = { x1, y1, x2, y2, color, size };
-            addStroke(stroke);
-            drawStroke(stroke);
-        }
+        let strokeIdCounter = 0;
 
         function continueDrawing(e) {
             if (isPanning) {
@@ -1371,7 +1368,7 @@
             const stroke = { x1: lastX, y1: lastY, x2: worldPos.x, y2: worldPos.y, color: currentColor, size: currentSize };
             addStroke(stroke);
             drawStroke(stroke);
-            broadcastDraw(lastX, lastY, worldPos.x, worldPos.y, currentColor, currentSize);
+            broadcastDraw(lastX, lastY, worldPos.x, worldPos.y, currentColor, currentSize, stroke.id);
 
             lastX = worldPos.x;
             lastY = worldPos.y;
@@ -1442,7 +1439,7 @@
             debouncedSaveCanvas();
             
             // HIGH FIX: Broadcast undo to peers (Issue 30)
-            broadcast({ type: 'undo', actionType: action.type });
+            broadcast({ type: 'undo', actionType: action.type, strokeId: action.stroke && action.stroke.id });
             
             showToast('Undo', 'Action undone');
         }
@@ -1498,10 +1495,10 @@
         }
 
         // ==================== PEER COMMUNICATION ====================
-        function broadcastDraw(x1, y1, x2, y2, color, size) {
+        function broadcastDraw(x1, y1, x2, y2, color, size, id) {
             broadcast({
                 type: 'draw',
-                x1, y1, x2, y2, color, size
+                id, x1, y1, x2, y2, color, size
             });
         }
 
@@ -2197,14 +2194,15 @@
                         const sanitizedColor = sanitizeHtml(data.color).substring(0, 20);
                         const sanitizedSize = Math.max(1, Math.min(100, data.size));
                         
-                        // Store stroke and draw it
-                        const stroke = { 
-                            x1: data.x1, 
-                            y1: data.y1, 
-                            x2: data.x2, 
-                            y2: data.y2, 
-                            color: sanitizedColor, 
-                            size: sanitizedSize 
+                        // Store stroke and draw it (preserve peer stroke ID for undo sync)
+                        const stroke = {
+                            id: data.id !== undefined ? data.id : undefined,
+                            x1: data.x1,
+                            y1: data.y1,
+                            x2: data.x2,
+                            y2: data.y2,
+                            color: sanitizedColor,
+                            size: sanitizedSize
                         };
                         strokes.push(stroke);
                         // CRITICAL FIX: Remote strokes should NOT be added to local undo stack
@@ -2285,9 +2283,14 @@
                     break;
                 case 'undo':
                     // HIGH FIX: Handle undo from peer (Issue 30)
-                    if (data.actionType === 'draw' && strokes.length > 0) {
-                        // Remove the last stroke (which should be the one the peer just drew)
-                        strokes.pop();
+                    if (data.actionType === 'draw') {
+                        // Remove by stroke ID if available, else fall back to last stroke
+                        let removed = false;
+                        if (data.strokeId !== undefined) {
+                            const idx = strokes.findIndex(s => s.id === data.strokeId);
+                            if (idx >= 0) { strokes.splice(idx, 1); removed = true; }
+                        }
+                        if (!removed && strokes.length > 0) { strokes.pop(); }
                         redrawCanvas();
                         debouncedSaveCanvas();
                     } else if (data.actionType === 'clear') {
