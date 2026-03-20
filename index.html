@@ -2448,6 +2448,23 @@
             }
         });
 
+        // BUG-024: Scroll-wheel zoom toward cursor position
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const coords = getCoordinates(e);
+            if (!coords) return;
+            const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+            const newZoom = Math.max(0.1, Math.min(5, zoomLevel * factor));
+            // Keep the point under the cursor stationary
+            const worldX = (coords.x - viewOffsetX) / zoomLevel;
+            const worldY = (coords.y - viewOffsetY) / zoomLevel;
+            zoomLevel = newZoom;
+            viewOffsetX = coords.x - worldX * zoomLevel;
+            viewOffsetY = coords.y - worldY * zoomLevel;
+            updateZoomDisplay();
+            redrawCanvas();
+        }, { passive: false });
+
         // Touch events
         canvas.addEventListener('touchstart', startDrawing, { passive: false });
         canvas.addEventListener('touchmove', continueDrawing, { passive: false });
