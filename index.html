@@ -861,6 +861,19 @@
             return div.innerHTML;
         }
 
+        // BUG-013: Sanitize CSS color values via allowlist regex, not HTML escaping.
+        // sanitizeHtml would pass through CSS injection vectors while also mangling
+        // valid colors that contain HTML-special characters.
+        function sanitizeColor(color) {
+            if (typeof color !== 'string') return '#58a6ff';
+            const t = color.trim();
+            // Hex: #rgb, #rgba, #rrggbb, #rrggbbaa
+            if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(t)) return t;
+            // rgb() / rgba() / hsl() / hsla() – only digits, spaces, commas, dot, %, /
+            if (/^(rgba?|hsla?)\([\d\s,%.\/]+\)$/i.test(t)) return t;
+            return '#58a6ff';
+        }
+
         function sanitizeCanvasDataUrl(dataUrl) {
             if (typeof dataUrl !== 'string') return null;
             // Only allow valid data URLs with image MIME types
@@ -2198,8 +2211,8 @@
                     if (typeof data.x1 === 'number' && typeof data.y1 === 'number' &&
                         typeof data.x2 === 'number' && typeof data.y2 === 'number' &&
                         typeof data.color === 'string' && typeof data.size === 'number') {
-                        // SECURITY FIX: Sanitize color to prevent injection
-                        const sanitizedColor = sanitizeHtml(data.color).substring(0, 20);
+                        // SECURITY FIX: Sanitize color via allowlist to prevent injection
+                        const sanitizedColor = sanitizeColor(data.color);
                         const sanitizedSize = Math.max(1, Math.min(100, data.size));
                         
                         // Store stroke and draw it (preserve peer stroke ID for undo sync)
@@ -2266,7 +2279,7 @@
                         data.strokes.forEach(stroke => {
                             if (stroke && typeof stroke.x1 === 'number' && typeof stroke.y1 === 'number') {
                                 // Sanitize the stroke
-                                stroke.color = sanitizeHtml(stroke.color || '#58a6ff').substring(0, 20);
+                                stroke.color = sanitizeColor(stroke.color || '#58a6ff');
                                 stroke.size = Math.max(1, Math.min(100, stroke.size || 2));
                                 strokes.push(stroke);
                             }
@@ -2314,7 +2327,7 @@
                             y1: data.stroke.y1,
                             x2: data.stroke.x2,
                             y2: data.stroke.y2,
-                            color: sanitizeHtml(data.stroke.color || '#58a6ff').substring(0, 20),
+                            color: sanitizeColor(data.stroke.color || '#58a6ff'),
                             size: Math.max(1, Math.min(100, data.stroke.size || 2))
                         };
                         strokes.push(stroke);
