@@ -1228,11 +1228,14 @@
         // Check if stroke is visible in current viewport
         function isStrokeVisible(stroke) {
             const bounds = getStrokeBounds(stroke);
+            // canvas.width/height are in backing-store (physical) pixels; divide by DPR to get CSS pixels
+            const cssW = canvas.width / devicePixelRatio;
+            const cssH = canvas.height / devicePixelRatio;
             const screenBounds = {
                 minX: -viewOffsetX / zoomLevel,
                 minY: -viewOffsetY / zoomLevel,
-                maxX: (canvas.width - viewOffsetX) / zoomLevel,
-                maxY: (canvas.height - viewOffsetY) / zoomLevel
+                maxX: (cssW - viewOffsetX) / zoomLevel,
+                maxY: (cssH - viewOffsetY) / zoomLevel
             };
             
             return !(bounds.maxX < screenBounds.minX || 
