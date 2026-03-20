@@ -1684,8 +1684,8 @@
                     showToast('Connection Failed', 'Could not connect to signaling server', 'error');
                     updateStatus('', 'Offline');
                     cleanupPeer();
-                    // Show modal again so user can retry
-                    joinModal.classList.remove('hidden');
+                    // Only show modal when not mid-retry
+                    if (reconnectAttempts === 0) joinModal.classList.remove('hidden');
                 }
             }, CONNECTION_CONFIG.connectionTimeout);
 
@@ -1820,7 +1820,8 @@
                     showToast('Connection Failed', 'Could not connect to signaling server', 'error');
                     updateStatus('', 'Offline');
                     cleanupPeer();
-                    joinModal.classList.remove('hidden');
+                    // Only show modal when not mid-retry
+                    if (reconnectAttempts === 0) joinModal.classList.remove('hidden');
                 }
             }, CONNECTION_CONFIG.connectionTimeout);
 
