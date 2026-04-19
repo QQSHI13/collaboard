@@ -1,172 +1,91 @@
-// CollaBoard Service Worker
-// Auto-refresh on hard reload for real-time collaborative app
+/**
+ * CollaBoard Service Worker
+ * Network-first for HTML, cache-first for assets
+ */
 
-const CACHE_NAME = 'collaboard-cache-v1';
+const CACHE_NAME = 'collaboard-v2';
 const urlsToCache = [
   '/',
   '/index.html'
 ];
 
-// ==================== INSTALL EVENT ====================
 self.addEventListener('install', (event) => {
-  // Skip waiting immediately - this ensures the new SW activates right away
   self.skipWaiting();
-  
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        return cache.addAll(urlsToCache);
-      })
-      .catch((err) => {
-        // Silently handle cache failure
-      })
+      .then((cache) => cache.addAll(urlsToCache))
   );
 });
 
-// ==================== ACTIVATE EVENT ====================
 self.addEventListener('activate', (event) => {
-  // Take control of all clients immediately
   event.waitUntil(
-    Promise.all([
-      // Clean up old caches
-      caches.keys().then((cacheNames) => {
-        return Promise.all(
-          cacheNames
-            .filter((name) => name !== CACHE_NAME)
-            .map((name) => {
-              return caches.delete(name);
-            })
-        );
-      }),
-      // Claim all clients so the SW is in control immediately
-      self.clients.claim()
-    ])
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      );
+    }).then(() => self.clients.claim())
   );
-  
-  // Notify all clients that the SW has activated
-  self.clients.matchAll().then((clients) => {
-    clients.forEach((client) => {
-      client.postMessage({
-        type: 'SW_ACTIVATED',
-        timestamp: Date.now()
-      });
-    });
-  });
 });
 
-// ==================== FETCH EVENT ====================
 self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+  if (event.request.method !== 'GET') return;
+
+  const url = new URL(event.request.url);
   
-  // Only handle GET requests
-  if (request.method !== 'GET') {
+  // Cross-origin requests - just fetch
+  if (url.origin !== self.location.origin) {
+    event.respondWith(fetch(event.request));
     return;
   }
-  
-  // Handle navigation requests (page loads)
-  if (request.mode === 'navigate') {
+
+  const isHTML = event.request.mode === 'navigate' || 
+                 event.request.destination === 'document' ||
+                 event.request.url.endsWith('.html');
+
+  if (isHTML) {
+    // Network-first for HTML pages
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Update cache with fresh content
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseClone);
-          });
-          return response;
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return networkResponse;
         })
         .catch(() => {
-          // Fallback to cache if network fails
-          return caches.match('/index.html');
+          return caches.match(event.request)
+            .then((cached) => cached || caches.match('/index.html'));
         })
     );
-    return;
-  }
-  
-  // For same-origin requests, use cache-first strategy
-  if (url.origin === self.location.origin) {
-    // For index.html specifically, always try network first to detect updates
-    if (url.pathname === '/' || url.pathname === '/index.html') {
-      event.respondWith(
-        fetch(request)
-          .then((response) => {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-            return response;
-          })
-          .catch(() => {
-            return caches.match(request);
-          })
-      );
-      return;
-    }
-    
-    // For other assets, use stale-while-revalidate
+  } else {
+    // Cache-first for assets
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
-        const fetchPromise = fetch(request)
+      caches.match(event.request).then((cachedResponse) => {
+        const fetchPromise = fetch(event.request)
           .then((networkResponse) => {
-            if (networkResponse.ok) {
+            if (networkResponse && networkResponse.status === 200) {
               const responseClone = networkResponse.clone();
               caches.open(CACHE_NAME).then((cache) => {
-                cache.put(request, responseClone);
+                cache.put(event.request, responseClone);
               });
             }
             return networkResponse;
           })
           .catch(() => cachedResponse);
-        
+
         return cachedResponse || fetchPromise;
       })
     );
-    return;
   }
-  
-  // For cross-origin requests (e.g., PeerJS CDN), just fetch
-  event.respondWith(fetch(request));
 });
 
-// ==================== MESSAGE EVENT ====================
-// Listen for messages from the main thread
 self.addEventListener('message', (event) => {
-  const { data } = event;
-  
-  if (!data) return;
-  
-  switch (data.type) {
-    case 'SKIP_WAITING':
-      // Force skip waiting
-      self.skipWaiting();
-      break;
-      
-    case 'CHECK_FOR_UPDATE':
-      // Trigger an update check
-      self.registration.update();
-      break;
-      
-    default:
-      break;
-  }
-});
-
-// ==================== SYNC EVENT (Background) ====================
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'check-updates') {
-    event.waitUntil(
-      self.registration.update()
-    );
-  }
-});
-
-// ==================== PERIODIC SYNC ====================
-// Check for updates periodically if supported
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag === 'update-check') {
-    event.waitUntil(
-      self.registration.update()
-    );
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
   }
 });
