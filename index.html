@@ -905,6 +905,16 @@
         }
 
         // ==================== STORAGE: LOCAL PERSISTENCE ====================
+        // Saving runs on every debounced stroke, so a failing quota would spam the
+        // user. Warn once per session, then stay quiet but keep logging.
+        let storageWarningShown = false;
+
+        function warnStorageOnce(message) {
+            if (storageWarningShown) return;
+            storageWarningShown = true;
+            showToast('Canvas Not Saved', message, 'info');
+        }
+
         function saveCanvasToStorage() {
             try {
                 const data = {
@@ -914,7 +924,12 @@
                 };
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
             } catch (e) {
-                
+                console.warn('[Storage] Failed to save canvas:', e);
+                warnStorageOnce(
+                    e && e.name === 'QuotaExceededError'
+                        ? 'Browser storage is full, so this board will not be restored on reload.'
+                        : 'This board could not be saved locally and will not be restored on reload.'
+                );
             }
         }
 
@@ -930,7 +945,14 @@
                     }
                 }
             } catch (e) {
-                
+                // Corrupt or unreadable saved state: start from an empty board and
+                // drop the bad entry so the next save can succeed.
+                console.warn('[Storage] Failed to load saved canvas, discarding it:', e);
+                try {
+                    localStorage.removeItem(STORAGE_KEY);
+                } catch (removeErr) {
+                    console.warn('[Storage] Failed to discard saved canvas:', removeErr);
+                }
             }
             return false;
         }
@@ -939,7 +961,7 @@
             try {
                 localStorage.removeItem(STORAGE_KEY);
             } catch (e) {
-                
+                console.warn('[Storage] Failed to clear saved canvas:', e);
             }
         }
 
