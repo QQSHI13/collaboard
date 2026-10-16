@@ -2829,7 +2829,12 @@
                 
                 // Auto-refresh when SW controller changes (new version)
                 let refreshing = false;
+                // Only auto-reload when an UPDATE replaces a controller this page already had.
+                // On a first visit the new worker claims an uncontrolled page, and reloading
+                // there would cost every first-time visitor a second page load.
+                const swHadController = !!navigator.serviceWorker.controller;
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (!swHadController) return;
                     if (refreshing) return;
                     refreshing = true;
                     window.location.reload();
