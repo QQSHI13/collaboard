@@ -4,7 +4,9 @@
   "private": true,
   "description": "Vendored browser dependencies for CollaBoard (nothing here is published).",
   "scripts": {
-    "vendor": "node scripts/vendor.mjs"
+    "vendor": "node scripts/vendor.mjs",
+    "theme": "node scripts/sync-theme.mjs",
+    "theme:pin": "node scripts/sync-theme.mjs --update-pin"
   },
   "devDependencies": {
     "peerjs": "1.5.2"

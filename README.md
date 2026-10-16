@@ -139,3 +139,26 @@ if `vendor/` differs from the pins, so **after merging a dependency bump run
 gh pr checkout <number> && npm ci && npm run vendor
 git commit -am "chore: re-vendor after dependency bump" && git push
 ```
+
+---
+
+## 🎨 Theme
+
+`theme/theme.css` is a vendored, self-hosted copy of the canonical stylesheet
+[`tools-suite/shared/theme.css`](https://github.com/QQSHI13/tools-suite/blob/main/shared/theme.css)
+(published at <https://qqshi13.github.io/tools-suite/shared/theme.css>). It holds
+the shared design tokens and primitives (buttons, cards, panels, badges, toasts,
+`sr-only`, focus/selection/scrollbar styling); `index.html` links it locally, so
+there is **no runtime cross-site dependency**.
+
+The copy is pinned by sha256 in `theme/theme.sha256`:
+
+```bash
+npm run theme              # fetch the canonical file, verify it against the pin, write theme/theme.css
+npm run theme -- --check   # verify the committed copy matches the pin (offline; what CI runs)
+npm run theme:pin          # maintainer: re-pin to the current canonical file, then commit
+```
+
+Never edit `theme/theme.css` by hand — `npm run theme` overwrites it, and the
+`Vendor check` workflow fails on drift. To pick up a theme change: edit
+`tools-suite/shared/theme.css`, deploy it, then run `npm run theme:pin` here.

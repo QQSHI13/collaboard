@@ -39,3 +39,8 @@ jobs:
             exit 1
           fi
           echo "vendor/ matches package.json ✅"
+
+      # theme/theme.css is a vendored copy of tools-suite/shared/theme.css and
+      # must hash to theme/theme.sha256 (which sync-theme.mjs checks offline).
+      - name: Fail if the vendored theme drifted from its pin
+        run: node scripts/sync-theme.mjs --check

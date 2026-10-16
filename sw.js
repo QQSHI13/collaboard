@@ -3,10 +3,11 @@
  * Network-first for HTML, cache-first for assets
  */
 
-const CACHE_NAME = 'collaboard-v2';
+const CACHE_NAME = 'collaboard-v3';
 const urlsToCache = [
   '/',
-  '/index.html'
+  '/index.html',
+  '/theme/theme.css'
 ];
 
 self.addEventListener('install', (event) => {
