@@ -104,7 +104,6 @@ See [LICENSE](./LICENSE) for details.
 
 Built with ❤️ by **QQ** and **Nova** ☄️
 
-Powered by [OpenClaw](https://openclaw.ai)
 
 Uses [PeerJS](https://peerjs.com/) for WebRTC signaling.
 
