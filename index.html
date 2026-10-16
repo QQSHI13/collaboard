@@ -17,6 +17,10 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://* https://*; img-src 'self' data: blob:;">
     <link rel="manifest" href="manifest.json">
     <title>CollaBoard - Real-time Collaborative Whiteboard</title>
+    <meta name="description" content="CollaBoard — a real-time collaborative whiteboard that syncs directly between browsers. No server, no account: just share the room code and draw together.">
+    <meta property="og:title" content="CollaBoard — Real-time Collaborative Whiteboard">
+    <meta property="og:description" content="Draw together in real time, straight between browsers — no server, no account.">
+    <meta property="og:type" content="website">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='10' y='10' width='80' height='80' rx='10' fill='%2358a6ff'/%3E%3Crect x='25' y='25' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='55' y='25' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='25' y='55' width='20' height='20' rx='3' fill='white'/%3E%3Crect x='55' y='55' width='20' height='20' rx='3' fill='white'/%3E%3C/svg%3E">
     <script src="vendor/peerjs.min.js" onerror="window.peerLoadError=true"></script>
     <script>
@@ -74,6 +78,15 @@
         .logo svg {
             width: 28px;
             height: 28px;
+        }
+
+        /* the app name is the page's h1; keep it looking like the old span */
+        .logo h1 {
+            font-size: inherit;
+            font-weight: inherit;
+            color: inherit;
+            margin: 0;
+            line-height: 1.2;
         }
 
         .connection-status {
@@ -555,7 +568,7 @@
                 <line x1="3" y1="9" x2="21" y2="9"/>
                 <line x1="3" y1="15" x2="21" y2="15"/>
             </svg>
-            CollaBoard
+            <h1>CollaBoard</h1>
         </div>
 
         <div class="room-info">
