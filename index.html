@@ -49,10 +49,18 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
             padding: 12px 20px;
             background-color: #161b22;
             border-bottom: 1px solid #30363d;
         }
+
+        /* Narrow screens: the room code + actions must be allowed to shrink and
+           wrap instead of pushing the page wider than the viewport. */
+        .room-info { flex-wrap: wrap; min-width: 0; }
+        .room-info > * { min-width: 0; }
+        .room-code { overflow-wrap: anywhere; }
 
         .logo {
             display: flex;
@@ -102,6 +110,7 @@
             display: flex;
             align-items: center;
             gap: 12px;
+            min-width: 0;
         }
 
         .room-code {
